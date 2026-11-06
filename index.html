@@ -1,0 +1,1962 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>SERVO-air シミュレーター (完全版: 高速・ループ・聴診統合)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@500;700;800&family=Share+Tech+Mono&display=swap');
+        .font-servo { font-family: 'Share Tech Mono', 'Roboto Mono', monospace; font-variant-numeric: tabular-nums; }
+        body { background-color: #070a0f; color: #f1f5f9; -webkit-tap-highlight-color: transparent; overflow-x: hidden; }
+        input[type="range"] { accent-color: #4ade80; }
+        
+        .servo-air-frame { background-color: #141820; border: 2px solid #2d3545; box-shadow: 0 14px 32px rgba(0,0,0,0.85); }
+        .servo-air-topbar { background: linear-gradient(180deg, #232936 0%, #151922 100%); border-bottom: 1.5px solid #2e3646; }
+        .servo-metric-box { background-color: #0b0d13; border-left: 4px solid #3b4252; box-shadow: inset 0 1px 3px rgba(0,0,0,0.6); overflow: hidden; min-width: 0; }
+        .servo-tile { background: linear-gradient(180deg, #283040 0%, #191e28 100%); border: 1.5px solid #3f4a61; transition: all 0.12s ease; cursor: pointer; min-height: 60px; overflow: hidden; min-width: 0; }
+        .servo-tile:hover { border-color: #4ade80; }
+        .servo-tile:active { transform: scale(0.96); }
+        .servo-tile-active { border: 2px solid #4ade80 !important; background: linear-gradient(180deg, #1b3a28 0%, #102419 100%) !important; box-shadow: 0 0 10px rgba(74, 222, 128, 0.35); }
+        
+        /* 画面サイズ制御 */
+        #app-container { transition: max-width 0.2s ease; margin-left: auto; margin-right: auto; width: 100%; }
+        .view-mobile-frame { border: 1.5px solid #334155; border-radius: 16px; padding: 4px; background-color: #090d14; }
+        
+        /* スマホ用レイアウト微調整 */
+        body.is-mobile-sim .pbw-bar-inner { flex-direction: column; align-items: stretch; }
+        body.is-mobile-sim #waveform-col { grid-column: span 12 / span 12; }
+        body.is-mobile-sim #metrics-col { grid-column: span 12 / span 12; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+        body.is-mobile-sim .servo-metric-box { padding: 5px 7px; }
+        body.is-mobile-sim #tile-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+        body.is-mobile-sim .servo-tile { padding: 4px 2px; min-height: 58px; }
+        
+        /* 動的フォントサイズ */
+        .metric-single-val { font-size: clamp(1.3rem, 5.0vw, 1.75rem); line-height: 1.15; white-space: nowrap; }
+        .metric-dual-primary { font-size: clamp(1.15rem, 4.4vw, 1.55rem); line-height: 1.15; white-space: nowrap; }
+        .metric-dual-secondary { font-size: clamp(0.9rem, 3.4vw, 1.15rem); line-height: 1.15; white-space: nowrap; }
+        .tile-main-val { font-size: clamp(1.1rem, 4.2vw, 1.4rem); line-height: 1.2; white-space: nowrap; }
+        @media (min-width: 1024px) {
+            body:not(.is-mobile-sim) .metric-single-val { font-size: 1.7rem; }
+            body:not(.is-mobile-sim) .metric-dual-primary { font-size: 1.5rem; }
+            body:not(.is-mobile-sim) .metric-dual-secondary { font-size: 1.15rem; }
+            body:not(.is-mobile-sim) .tile-main-val { font-size: 1.45rem; }
+        }
+
+        /* 聴診スポット */
+        .point-marker {
+            position: absolute; width: 22px; height: 22px; transform: translate(-50%, -50%);
+            border-radius: 9999px; cursor: pointer; transition: all 0.2s ease;
+            box-shadow: 0 0 8px rgba(0,0,0,0.6); border: 2px solid rgba(255, 255, 255, 0.85); z-index: 20;
+        }
+        .point-marker:hover { transform: translate(-50%, -50%) scale(1.35); z-index: 30; }
+        .point-active {
+            border: 2.5px solid #ffffff !important; box-shadow: 0 0 16px #facc15, 0 0 6px #ffffff !important;
+            transform: translate(-50%, -50%) scale(1.4) !important; background-color: #facc15 !important;
+            z-index: 40; animation: pulse-ring 1.5s infinite;
+        }
+        @keyframes pulse-ring {
+            0% { box-shadow: 0 0 0 0 rgba(250, 204, 21, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(250, 204, 21, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(250, 204, 21, 0); }
+        }
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 2px; }
+    </style>
+</head>
+<body class="p-1 sm:p-2.5 font-sans select-none text-sm pb-10 is-mobile-sim">
+
+    <div id="app-container" class="view-mobile-frame" style="max-width: 448px;">
+
+        <!-- 1. 上部ヘッダー -->
+        <header class="mb-1.5 bg-slate-900/95 p-2 rounded-xl border border-slate-700/90 shadow space-y-1.5">
+            <div class="flex flex-wrap justify-between items-center gap-1.5 border-b border-slate-800 pb-1.5">
+                <div class="flex items-center gap-1.5">
+                    <div class="bg-emerald-500/15 border border-emerald-500/60 px-2 py-0.5 rounded flex items-center gap-1.5">
+                        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                        <span class="font-servo font-extrabold text-sm sm:text-base tracking-wider text-white">SERVO-air</span>
+                    </div>
+                </div>
+
+                <div class="flex flex-wrap items-center gap-1">
+                    <button id="btn-sound-toggle" onclick="toggleSound()" class="px-2 py-0.5 rounded text-[11px] font-servo font-extrabold border border-slate-600 bg-slate-800 text-slate-300 transition active:scale-95">🔇 音: OFF</button>
+
+                    <!-- 言語切替 -->
+                    <div class="flex bg-slate-950 p-0.5 rounded border border-slate-700">
+                        <button id="btn-lang-jp" onclick="setLanguage('ja')" class="px-1.5 py-0.5 rounded text-[10px] font-extrabold bg-emerald-600 text-white shadow transition">JP</button>
+                        <button id="btn-lang-en" onclick="setLanguage('en')" class="px-1.5 py-0.5 rounded text-[10px] font-extrabold text-slate-400 hover:text-white transition">EN</button>
+                    </div>
+
+                    <!-- スマホ幅切替 -->
+                    <div id="sim-inch-bar" class="flex items-center gap-0.5 text-[10px] text-slate-400 mr-0.5">
+                        <span id="lbl-width">幅:</span>
+                        <button id="btn-w-360" onclick="setMobileMaxWidth(360)" class="px-1 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded border border-slate-700 transition">6.0"</button>
+                        <button id="btn-w-412" onclick="setMobileMaxWidth(412)" class="px-1 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded border border-slate-700 transition">6.3"</button>
+                        <button id="btn-w-448" onclick="setMobileMaxWidth(448)" class="px-1 py-0.5 bg-emerald-900/60 text-emerald-300 rounded border border-emerald-600/60 transition font-bold">6.5"</button>
+                    </div>
+
+                    <!-- デバイス切替 -->
+                    <div class="flex bg-slate-950 p-0.5 rounded border border-slate-700">
+                        <button id="btn-view-mobile" onclick="setScreenSize('mobile')" class="px-1.5 py-0.5 rounded text-[10px] font-extrabold transition bg-emerald-600 text-white shadow">📱 スマホ</button>
+                        <button id="btn-view-10" onclick="setScreenSize('10inch')" class="px-1.5 py-0.5 rounded text-[10px] font-extrabold transition text-slate-400 hover:text-white">📟 10"</button>
+                    </div>
+
+                    <button id="btn-reset" onclick="resetSimulator()" class="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-xs font-extrabold border border-slate-600 active:scale-95">🔄 初期化</button>
+                </div>
+            </div>
+
+            <!-- 下段：体格・症例 -->
+            <div class="pbw-bar-inner bg-slate-950/95 border border-slate-800 rounded-xl p-1.5 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-1.5">
+                <div class="flex flex-wrap items-center justify-between w-full lg:w-auto gap-1.5 bg-slate-900 px-2 py-1 rounded-lg border border-slate-700 text-xs">
+                    <div class="flex items-center gap-1.5">
+                        <div class="flex items-center gap-1">
+                            <span id="lbl-sex" class="text-[11px] text-slate-300 font-bold">性別:</span>
+                            <select id="patient-sex" onchange="updateBodyMetrics()" class="bg-slate-950 border border-slate-700 rounded px-1 py-0.5 text-xs font-extrabold text-white">
+                                <option value="male" id="opt-sex-m">男性</option>
+                                <option value="female" id="opt-sex-f" selected>女性</option>
+                            </select>
+                        </div>
+                        <div class="flex items-center gap-1">
+                            <span id="lbl-height" class="text-[11px] text-slate-300 font-bold">身長:</span>
+                            <button onclick="stepHeight(-1)" class="w-5 h-5 bg-slate-800 hover:bg-slate-700 rounded font-extrabold border border-slate-600">-</button>
+                            <input id="patient-height" type="number" min="130" max="200" step="1" value="160" onchange="updateBodyMetrics()" class="w-11 bg-slate-950 border border-emerald-500/70 rounded px-0.5 py-0.5 text-center font-servo font-extrabold text-emerald-400 text-xs">
+                            <span class="text-[10px] text-slate-400">cm</span>
+                            <button onclick="stepHeight(1)" class="w-5 h-5 bg-slate-800 hover:bg-slate-700 rounded font-extrabold border border-slate-600">+</button>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2 border-t sm:border-t-0 sm:border-l border-slate-700 pt-1 sm:pt-0 sm:pl-2 font-servo w-full sm:w-auto justify-between sm:justify-start">
+                        <div>
+                            <span class="text-[9px] text-slate-400 block leading-none font-sans">PBW</span>
+                            <span id="disp-pbw" class="text-xs font-extrabold text-cyan-400">52.4 kg</span>
+                        </div>
+                        <div>
+                            <span id="lbl-target-vt" class="text-[9px] text-slate-400 block leading-none font-sans">目標VT (6-8)</span>
+                            <span id="disp-target-vt-range" class="text-xs font-extrabold text-emerald-400">314-419 mL</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex flex-wrap items-center justify-between w-full lg:w-auto gap-1 bg-slate-900/70 px-2 py-1 rounded-lg border border-slate-800 text-xs">
+                    <div class="flex items-center gap-1">
+                        <span id="lbl-case" class="text-[11px] text-yellow-400 font-bold">症例:</span>
+                        <select id="case-preset" onchange="applyCasePreset(this.value)" class="bg-slate-950 border border-yellow-600/70 rounded px-1.5 py-0.5 text-xs font-bold text-yellow-300 max-w-[210px] truncate">
+                            <option value="normal" id="opt-case-normal" selected>健康な肺 (Normal)</option>
+                            <option value="copd" id="opt-case-copd">COPD急性増悪 (呼気延長・Wheezes)</option>
+                            <option value="asthma" id="opt-case-asthma">気管支喘息重積 (高調性Wheezes)</option>
+                            <option value="ards" id="opt-case-ards">重症ARDS (極低コンプライアンス)</option>
+                            <option value="edema" id="opt-case-edema">心原性肺水腫 (背側 Fine crackles)</option>
+                            <option value="secretion" id="opt-case-secretion">中枢気道分泌物貯留 (痰・水泡音)</option>
+                            <option value="one_lung" id="opt-case-one">片肺挿管 (左側呼吸音消失)</option>
+                            <option value="pneumothorax" id="opt-case-pnu">右緊張性気胸 (右側減弱〜消失)</option>
+                        </select>
+                    </div>
+                    <div class="flex items-center gap-1">
+                        <span id="lbl-spont" class="text-[11px] text-slate-400 font-bold">自発:</span>
+                        <button onclick="stepSpontRR(-2)" class="w-5 h-5 bg-slate-800 hover:bg-slate-700 rounded border border-slate-600">-</button>
+                        <span id="disp-spont-rr" class="font-servo font-extrabold text-purple-400 w-8 text-center">14/m</span>
+                        <button onclick="stepSpontRR(2)" class="w-5 h-5 bg-slate-800 hover:bg-slate-700 rounded border border-slate-600">+</button>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- 2. SERVO-air モニター本体 -->
+        <div class="servo-air-frame rounded-2xl overflow-hidden">
+            <div class="servo-air-topbar px-2 py-1.5 flex flex-wrap justify-between items-center gap-1">
+                <div class="flex flex-wrap items-center gap-1">
+                    <button onclick="openModeModal()" class="bg-emerald-950 hover:bg-emerald-900 text-emerald-300 text-xs font-extrabold px-2 py-1 rounded border border-emerald-500 font-servo tracking-wide flex items-center gap-1 shadow active:scale-95">
+                        <span id="mode-badge">PCV</span>
+                        <span id="lbl-mode-btn" class="text-[9px] bg-emerald-700 text-white px-1 py-0.2 rounded font-sans">モード ▾</span>
+                    </button>
+                    <div class="flex items-center gap-1 bg-slate-950 px-1.5 py-0.5 rounded border border-slate-700 text-[11px] font-servo">
+                        <span id="trig-indicator" class="w-3.5 h-3.5 rounded-full bg-purple-600 text-white flex items-center justify-center font-extrabold text-[9px] transition-opacity duration-150">T</span>
+                        <span id="trig-type-label" class="text-slate-100 font-bold text-[10px]">Flow 2.0</span>
+                    </div>
+                    <button id="btn-apnea-backup" onclick="toggleApneaBackup()" class="px-1.5 py-0.5 rounded text-[10px] font-servo font-extrabold border border-emerald-600 bg-emerald-950/80 text-emerald-300 transition active:scale-95">
+                        Backup: ON (15s)
+                    </button>
+                    <span id="ie-warning-badge" class="hidden bg-amber-950 text-amber-300 border border-amber-500 text-[9px] px-1.5 py-0.2 rounded font-servo font-extrabold animate-pulse">⚠️ Auto-PEEP</span>
+                </div>
+
+                <!-- 画面切替タブ（5分割） -->
+                <div class="w-full sm:w-auto flex items-center justify-between gap-1 py-0.5">
+                    <div class="grid grid-cols-5 gap-1 bg-slate-950 p-0.5 rounded border border-slate-700 font-servo text-[11px] w-full sm:w-auto">
+                        <button id="btn-tab-3waves" onclick="switchMainTab('3waves')" class="px-1.5 py-1 rounded font-extrabold bg-sky-600 text-white shadow text-center whitespace-nowrap">
+                            3波形
+                        </button>
+                        <button id="btn-tab-loops" onclick="switchMainTab('loops')" class="px-1.5 py-1 rounded font-extrabold text-slate-300 hover:text-white text-center whitespace-nowrap">
+                            ループ
+                        </button>
+                        <button id="btn-tab-physical" onclick="switchMainTab('physical')" class="px-1.5 py-1 rounded font-extrabold text-slate-300 hover:text-white text-center whitespace-nowrap">
+                            👤 所見
+                        </button>
+                        <button id="btn-tab-alarms" onclick="switchMainTab('alarms')" class="px-1 py-1 rounded font-extrabold text-amber-300 hover:text-white bg-amber-950/40 border border-amber-500/40 text-center whitespace-nowrap">
+                            アラーム
+                        </button>
+                        <button id="btn-tab-abg" onclick="switchMainTab('abg')" class="px-1.5 py-1 rounded font-extrabold text-rose-300 hover:text-white bg-rose-950/50 border border-rose-500/50 text-center whitespace-nowrap">
+                            🩸血ガス
+                        </button>
+                    </div>
+
+                    <div id="alarm-banner" class="hidden px-2 py-0.5 bg-red-600 text-white text-[11px] font-extrabold rounded font-servo shadow border border-red-300 whitespace-nowrap truncate max-w-[150px]">
+                        ⚠️ ALARM
+                    </div>
+                </div>
+            </div>
+
+            <!-- 解析コントロールバー -->
+            <div id="graph-control-bar" class="bg-[#0e121a] px-2 py-1 border-b border-slate-800 flex flex-wrap justify-between items-center gap-1 text-xs font-servo">
+                <div class="flex items-center gap-1">
+                    <button id="btn-freeze" onclick="toggleFreeze()" class="px-2 py-0.5 rounded font-extrabold border border-cyan-500/70 bg-cyan-950/60 text-cyan-300 hover:bg-cyan-900 flex items-center gap-1 active:scale-95 transition text-[11px]">
+                        <span>❄️</span> <span id="freeze-btn-text">フリーズ</span>
+                    </button>
+                    <span id="freeze-status-badge" class="hidden text-[9px] bg-amber-500 text-slate-950 font-extrabold px-1.5 py-0.2 rounded animate-pulse font-sans">
+                        一時停止中
+                    </span>
+                </div>
+
+                <div class="flex flex-wrap items-center gap-1">
+                    <div class="flex items-center bg-slate-950 p-0.5 rounded border border-slate-800">
+                        <span id="lbl-xaxis" class="text-[9px] text-slate-400 px-1 font-sans font-bold">横軸:</span>
+                        <button id="btn-time-6" onclick="setTimeScale(6)" class="px-1.5 py-0.2 rounded text-[10px] font-bold text-slate-400">6s</button>
+                        <button id="btn-time-10" onclick="setTimeScale(10)" class="px-1.5 py-0.2 rounded text-[10px] font-extrabold bg-emerald-600 text-white">10s</button>
+                        <button id="btn-time-15" onclick="setTimeScale(15)" class="px-1.5 py-0.2 rounded text-[10px] font-bold text-slate-400">15s</button>
+                    </div>
+                    <button id="btn-yscale-mode" onclick="toggleYAutoScale()" class="px-1.5 py-0.5 rounded text-[10px] font-bold border border-emerald-600/60 bg-emerald-950/50 text-emerald-300 active:scale-95">
+                        縦軸: Auto
+                    </button>
+                </div>
+            </div>
+
+            <div id="apnea-backup-alert" class="hidden bg-amber-500 text-slate-950 px-2 py-1 text-xs font-extrabold flex justify-between items-center font-servo">
+                <span id="lbl-apnea-alert">🚨 APNEA BACKUP ACTIVE — PCV換気中</span>
+                <button id="btn-apnea-reset" onclick="resetApneaBackup()" class="px-2 py-0.5 bg-slate-950 text-amber-300 rounded text-[10px] font-extrabold">SPONT復帰</button>
+            </div>
+<!-- メイン画面：グラフィック表示 ＋ 右側測定値 -->
+            <div class="p-1.5 grid grid-cols-12 gap-1.5">
+                <div id="waveform-col" class="col-span-12 sm:col-span-7 min-w-0">
+                    
+                    <!-- 【ビュー1：標準3波形】 -->
+                    <div id="standard-waves-view" class="space-y-1">
+                        <div id="wrap-paw" class="h-[132px] bg-[#090b10] rounded-xl p-1.5 pt-4 relative border border-slate-800 overflow-hidden">
+                            <div class="absolute top-1 left-2 right-2 flex justify-between items-center z-10 pointer-events-none">
+                                <div class="flex items-center gap-1.5">
+                                    <span class="text-xs font-extrabold text-yellow-400 font-servo">Paw (cmH2O)</span>
+                                    <span id="wave-tag-paw" class="text-[10px] font-bold text-yellow-200 bg-slate-950/90 px-1 py-0.2 rounded font-servo">Pplat: 19</span>
+                                </div>
+                                <span id="scale-tag-paw" class="text-[9px] text-slate-400 font-servo">Auto: 0〜25</span>
+                            </div>
+                            <canvas id="pressureChart"></canvas>
+                        </div>
+
+                        <div id="wrap-flow" class="h-[132px] bg-[#090b10] rounded-xl p-1.5 pt-4 relative border border-slate-800 overflow-hidden">
+                            <div class="absolute top-1 left-2 right-2 flex justify-between items-center z-10 pointer-events-none">
+                                <div class="flex items-center gap-1.5">
+                                    <span class="text-xs font-extrabold text-emerald-400 font-servo">Flow (L/min)</span>
+                                    <span id="wave-tag-flow" class="text-[10px] font-bold text-emerald-200 bg-slate-950/90 px-1 py-0.2 rounded font-servo">Exp residual: 0.0</span>
+                                </div>
+                                <span id="scale-tag-flow" class="text-[9px] text-slate-400 font-servo">Auto: ±45</span>
+                            </div>
+                            <canvas id="flowChart"></canvas>
+                        </div>
+
+                        <div id="wrap-vol" class="h-[142px] bg-[#090b10] rounded-xl p-1.5 pt-4 relative border border-slate-800 overflow-hidden">
+                            <div class="absolute top-1 left-2 right-2 flex justify-between items-center z-10 pointer-events-none">
+                                <div class="flex items-center gap-1.5">
+                                    <span class="text-xs font-extrabold text-sky-400 font-servo">Volume (mL)</span>
+                                    <span id="wave-tag-vol" class="text-[10px] font-bold text-sky-200 bg-slate-950/90 px-1 py-0.2 rounded font-servo">6.8 mL/kg</span>
+                                </div>
+                                <span id="scale-tag-vol" class="text-[9px] text-slate-400 font-servo">Auto: 0〜450</span>
+                            </div>
+                            <canvas id="volumeChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- 【ビュー2：P-V / F-V ループ表示】 -->
+                    <div id="loops-view" class="hidden">
+                        <div id="loop-view-grid" class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                            <div id="wrap-pv-loop" class="h-[270px] bg-[#090b10] rounded-xl p-2 relative border border-slate-800 flex flex-col justify-between">
+                                <div class="flex justify-between items-center z-10">
+                                    <span class="text-xs font-extrabold text-yellow-400 font-servo">P-V Loop</span>
+                                    <span id="pv-loop-tag" class="text-xs font-bold text-yellow-200 font-servo">Cdyn: 30.0</span>
+                                </div>
+                                <div class="relative flex-1 min-h-0 mt-1"><canvas id="pvLoopChart"></canvas></div>
+                                <div id="pv-loop-finding" class="text-[11px] font-bold text-emerald-300 font-servo text-center bg-slate-950 py-1 px-1.5 rounded border border-slate-800 mt-1 truncate">
+                                    所見: 適正コンプライアンス域
+                                </div>
+                            </div>
+
+                            <div id="wrap-fv-loop" class="h-[270px] bg-[#090b10] rounded-xl p-2 relative border border-slate-800 flex flex-col justify-between">
+                                <div class="flex justify-between items-center z-10">
+                                    <span class="text-xs font-extrabold text-emerald-400 font-servo">F-V Loop</span>
+                                    <span id="fv-loop-tag" class="text-xs font-bold text-emerald-200 font-servo">Flow-Volume</span>
+                                </div>
+                                <div class="relative flex-1 min-h-0 mt-1"><canvas id="fvLoopChart"></canvas></div>
+                                <div id="fv-loop-finding" class="text-[11px] font-bold text-emerald-300 font-servo text-center bg-slate-950 py-1 px-1.5 rounded border border-slate-800 mt-1 truncate">
+                                    所見: 呼気終末ゼロ帰還良好
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 【ビュー3：身体所見 ＆ 聴診マップ】 -->
+                    <div id="physical-view" class="hidden flex flex-col gap-2">
+                        <!-- アセスメント結果カード -->
+                        <div id="assessment-result-panel" class="bg-slate-900 border border-slate-700 rounded-xl p-3 min-h-[110px] flex flex-col justify-center items-center text-center">
+                            <span id="lbl-phys-init" class="text-slate-400 text-xs">左のボタンまたは右の写真スポットをタップしてください。</span>
+                        </div>
+
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <!-- 10項目 視診・触診ボタン -->
+                            <div class="bg-[#0b0e14] border border-slate-800 rounded-xl p-2 flex flex-col gap-1 max-h-[290px] overflow-y-auto text-xs">
+                                <h3 id="lbl-phys-title" class="text-xs font-bold text-sky-400 mb-1 border-b border-slate-800 pb-1">👤 視診・触診・その他</h3>
+                                <button onclick="showPhysicalFinding('jvd')" id="btn-phys-1" class="p-1.5 bg-slate-800 border border-slate-600 rounded text-left active:bg-slate-700">1. 頸静脈怒張 (JVD)</button>
+                                <button onclick="showPhysicalFinding('emphysema')" id="btn-phys-2" class="p-1.5 bg-slate-800 border border-slate-600 rounded text-left active:bg-slate-700">2. 皮下気腫の触知</button>
+                                <button onclick="showPhysicalFinding('chest_motion')" id="btn-phys-3" class="p-1.5 bg-slate-800 border border-slate-600 rounded text-left active:bg-slate-700">3. 胸郭の動き・対称性</button>
+                                <button onclick="showPhysicalFinding('retraction')" id="btn-phys-4" class="p-1.5 bg-slate-800 border border-slate-600 rounded text-left active:bg-slate-700">4. 努力呼吸・陥没呼吸</button>
+                                <button onclick="showPhysicalFinding('abdomen')" id="btn-phys-5" class="p-1.5 bg-slate-800 border border-slate-600 rounded text-left active:bg-slate-700">5. 腹壁緊張度</button>
+                                <button onclick="showPhysicalFinding('skin')" id="btn-phys-6" class="p-1.5 bg-slate-800 border border-slate-600 rounded text-left active:bg-slate-700">6. 口唇色・チアノーゼ</button>
+                                <button onclick="showPhysicalFinding('crt')" id="btn-phys-7" class="p-1.5 bg-slate-800 border border-slate-600 rounded text-left active:bg-slate-700">7. 末梢循環 (CRT)</button>
+                                <button onclick="showPhysicalFinding('tube')" id="btn-phys-8" class="p-1.5 bg-slate-800 border border-slate-600 rounded text-left active:bg-slate-700">8. 気管チューブ位置</button>
+                                <button onclick="showPhysicalFinding('cuff')" id="btn-phys-9" class="p-1.5 bg-slate-800 border border-slate-600 rounded text-left active:bg-slate-700">9. カフ圧・リーク音</button>
+                                <button onclick="showPhysicalFinding('rass')" id="btn-phys-10" class="p-1.5 bg-slate-800 border border-slate-600 rounded text-left active:bg-slate-700">10. 同調性・鎮静 (RASS)</button>
+                            </div>
+
+                            <!-- 聴診マップ (PNG写真版) -->
+                            <div class="bg-[#0b0e14] border border-slate-800 rounded-xl p-2 flex flex-col relative h-[290px]">
+                                <div class="flex justify-between items-center mb-1 z-10">
+                                    <h3 id="lbl-ausc-title" class="text-xs font-bold text-emerald-400">🎧 聴診 (解剖順序準拠)</h3>
+                                    <div class="flex bg-slate-900 rounded border border-slate-700 text-[10px]">
+                                        <button onclick="toggleAuscultationView('front')" id="btn-ausc-front" class="px-2 py-0.5 bg-emerald-600 text-white rounded">前面</button>
+                                        <button onclick="toggleAuscultationView('back')" id="btn-ausc-back" class="px-2 py-0.5 text-slate-400 rounded">背面</button>
+                                    </div>
+                                </div>
+                                <div class="relative flex-1 bg-slate-950 rounded-lg overflow-hidden flex items-center justify-center">
+                                    <!-- 前面 -->
+                                    <div id="ausc-front" class="w-full h-full relative bg-contain bg-center bg-no-repeat" style="background-image: url('IMG_7358.PNG');">
+                                        <div class="absolute inset-0 bg-slate-950/10 pointer-events-none"></div>
+                                        <button onclick="playLungSound('front', 1, this)" class="point-marker bg-emerald-500/80" style="top: 22%; left: 39%;"></button>
+                                        <button onclick="playLungSound('front', 2, this)" class="point-marker bg-emerald-500/80" style="top: 22%; left: 61%;"></button>
+                                        <button onclick="playLungSound('front', 3, this)" class="point-marker bg-emerald-500/80" style="top: 32%; left: 58%;"></button>
+                                        <button onclick="playLungSound('front', 4, this)" class="point-marker bg-emerald-500/80" style="top: 32%; left: 42%;"></button>
+                                        <button onclick="playLungSound('front', 5, this)" class="point-marker bg-cyan-400/80" style="top: 42%; left: 38%;"></button>
+                                        <button onclick="playLungSound('front', 6, this)" class="point-marker bg-cyan-400/80" style="top: 42%; left: 62%;"></button>
+                                        <button onclick="playLungSound('front', 7, this)" class="point-marker bg-blue-500/80" style="top: 55%; left: 59%;"></button>
+                                        <button onclick="playLungSound('front', 8, this)" class="point-marker bg-blue-500/80" style="top: 55%; left: 41%;"></button>
+                                        <button onclick="playLungSound('front', 9, this)" class="point-marker bg-blue-500/80" style="top: 67%; left: 32%;"></button>
+                                        <button onclick="playLungSound('front', 10, this)" class="point-marker bg-blue-500/80" style="top: 67%; left: 68%;"></button>
+                                    </div>
+                                    <!-- 背面 -->
+                                    <div id="ausc-back" class="w-full h-full relative bg-contain bg-center bg-no-repeat hidden" style="background-image: url('IMG_7359.PNG');">
+                                        <div class="absolute inset-0 bg-slate-950/10 pointer-events-none"></div>
+                                        <button onclick="playLungSound('back', 1, this)" class="point-marker bg-cyan-400/80" style="top: 25%; left: 43%;"></button>
+                                        <button onclick="playLungSound('back', 2, this)" class="point-marker bg-cyan-400/80" style="top: 25%; left: 57%;"></button>
+                                        <button onclick="playLungSound('back', 3, this)" class="point-marker bg-cyan-400/80" style="top: 38%; left: 57%;"></button>
+                                        <button onclick="playLungSound('back', 4, this)" class="point-marker bg-cyan-400/80" style="top: 38%; left: 43%;"></button>
+                                        <button onclick="playLungSound('back', 5, this)" class="point-marker bg-blue-500/80" style="top: 52%; left: 39%;"></button>
+                                        <button onclick="playLungSound('back', 6, this)" class="point-marker bg-blue-500/80" style="top: 52%; left: 61%;"></button>
+                                        <button onclick="playLungSound('back', 7, this)" class="point-marker bg-blue-500/80" style="top: 68%; left: 64%;"></button>
+                                        <button onclick="playLungSound('back', 8, this)" class="point-marker bg-blue-500/80" style="top: 68%; left: 36%;"></button>
+                                    </div>
+                                </div>
+                                <!-- 正常音凡例 -->
+                                <div class="grid grid-cols-3 gap-1 text-[9px] text-center font-bold bg-slate-950 p-1 rounded border border-slate-800 mt-1">
+                                    <div class="flex items-center justify-center gap-1"><span class="w-2 h-2 rounded-full bg-emerald-500"></span><span id="lbl-leg-trachea" class="text-emerald-300">気管(支)音</span></div>
+                                    <div class="flex items-center justify-center gap-1"><span class="w-2 h-2 rounded-full bg-cyan-400"></span><span id="lbl-leg-broncho" class="text-cyan-300">気管支肺胞音</span></div>
+                                    <div class="flex items-center justify-center gap-1"><span class="w-2 h-2 rounded-full bg-blue-500"></span><span id="lbl-leg-vesic" class="text-blue-300">肺胞音</span></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 【ビュー4：アラーム設定】 -->
+                    <div id="alarms-view" class="hidden space-y-2 font-servo">
+                        <div class="bg-gradient-to-r from-amber-950/60 to-slate-900 p-2 rounded-xl border border-amber-600/50 flex flex-wrap justify-between items-center gap-1.5">
+                            <div>
+                                <span class="text-xs sm:text-sm font-extrabold text-amber-300 flex items-center gap-1">
+                                    <span>🔔</span> <span id="lbl-alarm-title">アラーム閾値管理 (Alarm Limits)</span>
+                                </span>
+                                <span id="lbl-alarm-sub" class="text-[10px] text-slate-300 font-sans block">臨床基準に準拠した5大監視アラーム</span>
+                            </div>
+                            <button id="btn-alarm-auto" onclick="autoSetAlarms()" class="px-2.5 py-1 bg-amber-600 hover:bg-amber-500 text-slate-950 rounded text-xs font-extrabold flex items-center gap-1 shadow active:scale-95 transition">
+                                <span>⚡</span> <span>推奨値で自動設定</span>
+                            </button>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-1.5 text-xs">
+                            <div class="bg-[#0b0e14] p-2 rounded-xl border border-slate-800 space-y-1.5">
+                                <div class="flex justify-between items-center border-b border-slate-800 pb-1">
+                                    <span id="lbl-alm-paw" class="font-extrabold text-yellow-400 text-xs">気道内圧 (Paw)</span><span class="text-[9px] text-slate-400">cmH2O</span>
+                                </div>
+                                <div class="space-y-0.5">
+                                    <div class="flex justify-between items-center text-[10px]"><span id="lbl-alm-paw-h" class="text-amber-300 font-bold">高圧 (HIP / Paw High)</span><span id="lbl-alm-paw-h-hint" class="text-[9px] text-slate-400 font-sans">目安: ピーク圧+10</span></div>
+                                    <div class="flex items-center gap-1.5">
+                                        <input type="range" id="rng-paw-high" min="15" max="55" step="1" oninput="syncAlarmVal('paw-high', this.value)" class="flex-1 accent-amber-500 h-1.5 bg-slate-800 rounded">
+                                        <input type="number" id="num-paw-high" min="15" max="55" step="1" onchange="syncAlarmVal('paw-high', this.value)" class="w-12 bg-slate-950 border border-amber-500/80 rounded px-1 py-0.2 text-center font-bold text-amber-300 text-xs">
+                                    </div>
+                                </div>
+                                <div class="space-y-0.5 pt-1 border-t border-slate-900">
+                                    <div class="flex justify-between items-center text-[10px]"><span id="lbl-alm-paw-l" class="text-yellow-300 font-bold">低圧 (LIP / Paw Low)</span><span id="lbl-alm-paw-l-hint" class="text-[9px] text-slate-400 font-sans">目安: 安定時70%</span></div>
+                                    <div class="flex items-center gap-1.5">
+                                        <input type="range" id="rng-paw-low" min="2" max="25" step="1" oninput="syncAlarmVal('paw-low', this.value)" class="flex-1 accent-yellow-400 h-1.5 bg-slate-800 rounded">
+                                        <input type="number" id="num-paw-low" min="2" max="25" step="1" onchange="syncAlarmVal('paw-low', this.value)" class="w-12 bg-slate-950 border border-yellow-400/80 rounded px-1 py-0.2 text-center font-bold text-yellow-300 text-xs">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="bg-[#0b0e14] p-2 rounded-xl border border-slate-800 space-y-1.5">
+                                <div class="flex justify-between items-center border-b border-slate-800 pb-1">
+                                    <span id="lbl-alm-mv" class="font-extrabold text-sky-400 text-xs">分時換気量 (MVe)</span><span class="text-[9px] text-slate-400">L/min</span>
+                                </div>
+                                <div class="space-y-0.5">
+                                    <div class="flex justify-between items-center text-[10px]"><span id="lbl-alm-mv-h" class="text-sky-300 font-bold">上限 (MV High)</span><span id="lbl-alm-mv-h-hint" class="text-[9px] text-slate-400 font-sans">目安: 実測+25%</span></div>
+                                    <div class="flex items-center gap-1.5">
+                                        <input type="range" id="rng-mv-high" min="3.0" max="20.0" step="0.2" oninput="syncAlarmVal('mv-high', this.value)" class="flex-1 accent-sky-400 h-1.5 bg-slate-800 rounded">
+                                        <input type="number" id="num-mv-high" min="3.0" max="20.0" step="0.1" onchange="syncAlarmVal('mv-high', this.value)" class="w-14 bg-slate-950 border border-sky-400/80 rounded px-1 py-0.2 text-center font-bold text-sky-300 text-xs">
+                                    </div>
+                                </div>
+                                <div class="space-y-0.5 pt-1 border-t border-slate-900">
+                                    <div class="flex justify-between items-center text-[10px]"><span id="lbl-alm-mv-l" class="text-cyan-300 font-bold">下限 (MV Low)</span><span id="lbl-alm-mv-l-hint" class="text-[9px] text-slate-400 font-sans">目安: 実測75%</span></div>
+                                    <div class="flex items-center gap-1.5">
+                                        <input type="range" id="rng-mv-low" min="1.0" max="10.0" step="0.2" oninput="syncAlarmVal('mv-low', this.value)" class="flex-1 accent-cyan-400 h-1.5 bg-slate-800 rounded">
+                                        <input type="number" id="num-mv-low" min="1.0" max="10.0" step="0.1" onchange="syncAlarmVal('mv-low', this.value)" class="w-14 bg-slate-950 border border-cyan-400/80 rounded px-1 py-0.2 text-center font-bold text-cyan-300 text-xs">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="bg-[#0b0e14] p-2 rounded-xl border border-slate-800 space-y-1.5">
+                                <div class="flex justify-between items-center border-b border-slate-800 pb-1">
+                                    <span id="lbl-alm-vt" class="font-extrabold text-sky-400 text-xs">1回換気量 (VTe)</span><span class="text-[9px] text-slate-400">mL</span>
+                                </div>
+                                <div class="space-y-0.5">
+                                    <div class="flex justify-between items-center text-[10px]"><span id="lbl-alm-vt-h" class="text-sky-300 font-bold">上限 (VT High)</span><span id="lbl-alm-vt-h-hint" class="text-[9px] text-slate-400 font-sans">目安: 実測+30%</span></div>
+                                    <div class="flex items-center gap-1.5">
+                                        <input type="range" id="rng-vt-high" min="200" max="900" step="10" oninput="syncAlarmVal('vt-high', this.value)" class="flex-1 accent-sky-400 h-1.5 bg-slate-800 rounded">
+                                        <input type="number" id="num-vt-high" min="200" max="900" step="10" onchange="syncAlarmVal('vt-high', this.value)" class="w-14 bg-slate-950 border border-sky-400/80 rounded px-1 py-0.2 text-center font-bold text-sky-300 text-xs">
+                                    </div>
+                                </div>
+                                <div class="space-y-0.5 pt-1 border-t border-slate-900">
+                                    <div class="flex justify-between items-center text-[10px]"><span id="lbl-alm-vt-l" class="text-cyan-300 font-bold">下限 (VT Low)</span><span id="lbl-alm-vt-l-hint" class="text-[9px] text-slate-400 font-sans">目安: 実測70%</span></div>
+                                    <div class="flex items-center gap-1.5">
+                                        <input type="range" id="rng-vt-low" min="100" max="600" step="10" oninput="syncAlarmVal('vt-low', this.value)" class="flex-1 accent-cyan-400 h-1.5 bg-slate-800 rounded">
+                                        <input type="number" id="num-vt-low" min="100" max="600" step="10" onchange="syncAlarmVal('vt-low', this.value)" class="w-14 bg-slate-950 border border-cyan-400/80 rounded px-1 py-0.2 text-center font-bold text-cyan-300 text-xs">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="bg-[#0b0e14] p-2 rounded-xl border border-slate-800 space-y-1.5">
+                                <div class="flex justify-between items-center border-b border-slate-800 pb-1">
+                                    <span id="lbl-alm-rr" class="font-extrabold text-emerald-400 text-xs">呼吸回数 (RR)</span><span class="text-[9px] text-slate-400">/min</span>
+                                </div>
+                                <div class="space-y-0.5">
+                                    <div class="flex justify-between items-center text-[10px]"><span id="lbl-alm-rr-h" class="text-emerald-300 font-bold">上限 (RR High)</span><span id="lbl-alm-rr-h-hint" class="text-[9px] text-slate-400 font-sans">目安: 普段+12</span></div>
+                                    <div class="flex items-center gap-1.5">
+                                        <input type="range" id="rng-rr-high" min="15" max="55" step="1" oninput="syncAlarmVal('rr-high', this.value)" class="flex-1 accent-emerald-400 h-1.5 bg-slate-800 rounded">
+                                        <input type="number" id="num-rr-high" min="15" max="55" step="1" onchange="syncAlarmVal('rr-high', this.value)" class="w-14 bg-slate-950 border border-emerald-400/80 rounded px-1 py-0.2 text-center font-bold text-emerald-300 text-xs">
+                                    </div>
+                                </div>
+                                <div class="space-y-0.5 pt-1 border-t border-slate-900">
+                                    <div class="flex justify-between items-center text-[10px]"><span id="lbl-alm-rr-l" class="text-emerald-400 font-bold">下限 (RR Low)</span><span id="lbl-alm-rr-l-hint" class="text-[9px] text-slate-400 font-sans">目安: 普段-7</span></div>
+                                    <div class="flex items-center gap-1.5">
+                                        <input type="range" id="rng-rr-low" min="4" max="20" step="1" oninput="syncAlarmVal('rr-low', this.value)" class="flex-1 accent-emerald-500 h-1.5 bg-slate-800 rounded">
+                                        <input type="number" id="num-rr-low" min="4" max="20" step="1" onchange="syncAlarmVal('rr-low', this.value)" class="w-14 bg-slate-950 border border-emerald-500/80 rounded px-1 py-0.2 text-center font-bold text-emerald-400 text-xs">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 【ビュー5：血液ガス分析（ABG）】 -->
+                    <div id="abg-view" class="hidden space-y-2 font-servo">
+                        <div class="bg-gradient-to-r from-rose-950/70 to-slate-900 p-2 rounded-xl border border-rose-600/50 flex flex-wrap justify-between items-center gap-2">
+                            <div>
+                                <span class="text-xs sm:text-sm font-extrabold text-rose-300 flex items-center gap-1">
+                                    <span>🩸</span> <span id="lbl-abg-title">動脈血液ガス分析 (ABG)</span>
+                                </span>
+                                <span id="abg-status-sub" class="text-[10px] text-slate-300 font-sans block mt-0.5">現在の換気・酸素化設定をリアルタイム評価</span>
+                            </div>
+                            <div class="flex items-center gap-1.5">
+                                <button id="btn-abg-run" onclick="runABGAnalysis()" class="px-3 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded text-xs font-extrabold flex items-center gap-1 shadow active:scale-95 transition">
+                                    <span>💉</span> <span>採血・再評価</span>
+                                </button>
+                                <button id="btn-abg-clear" onclick="clearABGHistory()" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-[11px] font-bold border border-slate-600">クリア</button>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-3 sm:grid-cols-6 gap-1 text-center font-servo">
+                            <div class="bg-[#0b0e14] p-1.5 rounded-lg border border-slate-800">
+                                <span class="text-[9px] text-slate-400 block font-sans">pH</span><span id="abg-cur-ph" class="text-base font-extrabold text-emerald-400">7.40</span>
+                            </div>
+                            <div class="bg-[#0b0e14] p-1.5 rounded-lg border border-slate-800">
+                                <span class="text-[9px] text-slate-400 block font-sans">PaCO2</span><span id="abg-cur-paco2" class="text-base font-extrabold text-sky-400">40.0</span><span class="text-[8px] text-slate-500">mmHg</span>
+                            </div>
+                            <div class="bg-[#0b0e14] p-1.5 rounded-lg border border-slate-800">
+                                <span class="text-[9px] text-slate-400 block font-sans">PaO2</span><span id="abg-cur-pao2" class="text-base font-extrabold text-yellow-400">95.0</span><span class="text-[8px] text-slate-500">mmHg</span>
+                            </div>
+                            <div class="bg-[#0b0e14] p-1.5 rounded-lg border border-slate-800">
+                                <span class="text-[9px] text-slate-400 block font-sans">HCO3-</span><span id="abg-cur-hco3" class="text-base font-extrabold text-purple-400">24.0</span><span class="text-[8px] text-slate-500">mmol/L</span>
+                            </div>
+                            <div class="bg-[#0b0e14] p-1.5 rounded-lg border border-slate-800">
+                                <span class="text-[9px] text-slate-400 block font-sans">SaO2</span><span id="abg-cur-sao2" class="text-base font-extrabold text-emerald-300">98%</span>
+                            </div>
+                            <div class="bg-[#0b0e14] p-1.5 rounded-lg border border-slate-800">
+                                <span id="lbl-abg-pf" class="text-[9px] text-slate-400 block font-sans">P/F 比</span><span id="abg-cur-pf" class="text-base font-extrabold text-cyan-400">238</span>
+                            </div>
+                        </div>
+                        <div id="abg-interp-box" class="bg-slate-900/90 p-2 rounded-xl border border-slate-700 text-xs font-sans flex flex-col gap-1">
+                            <div class="flex justify-between items-center">
+                                <strong id="abg-interp-title" class="text-emerald-400 font-bold">【酸塩基平衡】 正常範囲 (Normal)</strong>
+                                <span id="abg-oxygen-status" class="text-[10px] px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-300 font-servo">酸素化良好</span>
+                            </div>
+                            <p id="abg-interp-detail" class="text-[11px] text-slate-300 leading-relaxed">設定換気量・酸素濃度が現在の病態と適合しています。</p>
+                        </div>
+                        <div class="bg-slate-950 p-1.5 rounded-xl border border-slate-800 text-[11px] overflow-hidden">
+                            <div class="text-[10px] text-slate-400 font-bold px-1 mb-1 flex justify-between"><span id="lbl-abg-hist">経時的推移ログ (History)</span><span id="lbl-abg-hist-sub">最新5件</span></div>
+                            <div class="overflow-x-auto max-h-[140px] overflow-y-auto">
+                                <table class="w-full text-center font-servo">
+                                    <thead>
+                                        <tr class="text-[9px] text-slate-400 border-b border-slate-800 sticky top-0 bg-slate-950">
+                                            <th id="th-time" class="py-0.5">時刻</th><th id="th-set">設定(Fi/PEEP)</th><th>pH</th><th>PaCO2</th><th>PaO2</th><th>HCO3</th><th id="th-pf">P/F比</th><th id="th-judge">判定</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="abg-history-tbody" class="text-slate-200 divide-y divide-slate-900 text-[10px]"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 右側測定値カラム -->
+                <div id="metrics-col" class="col-span-12 sm:col-span-5 grid grid-cols-2 gap-1 content-start min-w-0">
+                    <div class="servo-metric-box p-1.5 rounded-xl border-l-yellow-400">
+                        <div class="flex justify-between text-[10px] font-extrabold text-slate-300 font-servo truncate"><span id="lbl-ppeak">Ppeak</span><span id="lbl-pplat">(Pplat)</span></div>
+                        <div class="flex items-baseline justify-between mt-0.5 gap-1"><span id="m-ppeak" class="metric-single-val font-extrabold font-servo text-yellow-400">20</span><span id="m-pplat" class="metric-dual-secondary font-extrabold font-servo text-yellow-200">(19)</span></div>
+                    </div>
+                    <div class="servo-metric-box p-1.5 rounded-xl border-l-yellow-400">
+                        <div class="flex justify-between text-[10px] font-extrabold text-slate-300 font-servo truncate"><span id="lbl-peep">PEEPtot</span><span id="lbl-autopeep">Auto</span></div>
+                        <div class="flex items-baseline justify-between mt-0.5 gap-1"><span id="m-peep" class="metric-single-val font-extrabold font-servo text-yellow-400">5.0</span><span id="m-autopeep" class="metric-dual-secondary font-extrabold font-servo text-slate-400">+0.0</span></div>
+                    </div>
+                    <div class="servo-metric-box p-1.5 rounded-xl border-l-emerald-400">
+                        <div class="flex justify-between text-[10px] font-extrabold text-slate-300 font-servo truncate"><span id="lbl-rr">RR (b/m)</span><span id="lbl-srr">(自発sRR)</span></div>
+                        <div class="flex items-baseline justify-between mt-0.5 gap-1"><span id="m-rr" class="metric-single-val font-extrabold font-servo text-emerald-400">15</span><span id="m-srr-sub" class="metric-dual-secondary font-extrabold font-servo text-purple-400">(14)</span></div>
+                    </div>
+                    <div class="servo-metric-box p-1.5 rounded-xl border-l-emerald-400">
+                        <div class="flex justify-between text-[10px] font-extrabold text-slate-300 font-servo truncate"><span id="lbl-o2">O2 (%)</span><span id="lbl-tite">Ti/Te</span></div>
+                        <div class="flex items-baseline justify-between mt-0.5 gap-1"><span id="m-o2" class="metric-single-val font-extrabold font-servo text-emerald-400">40</span><span id="m-tite" class="text-[11px] font-extrabold font-servo text-slate-200 whitespace-nowrap">1.0/3.0s</span></div>
+                    </div>
+                    <div class="servo-metric-box p-1.5 rounded-xl border-l-sky-400">
+                        <div class="flex justify-between text-[10px] font-extrabold text-slate-300 font-servo truncate"><span class="text-sky-300">VTi / VTe</span><span id="lbl-vt-unit">(mL)</span></div>
+                        <div class="flex items-baseline justify-between mt-0.5 font-servo whitespace-nowrap"><span id="m-vti" class="metric-dual-primary font-extrabold text-sky-300">360</span><span class="text-xs text-slate-500 font-bold mx-0.5">/</span><span id="m-vte" class="metric-dual-primary font-extrabold text-sky-400">355</span></div>
+                    </div>
+                    <div class="servo-metric-box p-1.5 rounded-xl border-l-sky-400">
+                        <div class="flex justify-between text-[10px] font-extrabold text-slate-300 font-servo truncate"><span class="text-sky-300">MVi / MVe</span><span id="lbl-mv-unit">(L/m)</span></div>
+                        <div class="flex items-baseline justify-between mt-0.5 font-servo whitespace-nowrap"><span id="m-mvi" class="metric-dual-primary font-extrabold text-sky-200">5.4</span><span class="text-xs text-slate-500 font-bold mx-0.5">/</span><span id="m-mve" class="metric-dual-primary font-extrabold text-sky-400">5.3</span></div>
+                    </div>
+                    <div class="servo-metric-box p-1.5 rounded-xl border-l-slate-400">
+                        <div class="flex justify-between text-[10px] font-extrabold text-slate-300 font-servo truncate"><span id="lbl-ie-set">設定I:E</span><span id="lbl-ie-meas">(実測)</span></div>
+                        <div class="flex items-baseline justify-between mt-0.5 gap-1 whitespace-nowrap"><span id="m-ie-set" class="metric-dual-primary font-extrabold font-servo text-emerald-400">1:3.0</span><span id="m-ie-meas" class="text-[11px] font-extrabold font-servo text-slate-300">(1:3.0)</span></div>
+                    </div>
+                    <div class="servo-metric-box p-1.5 rounded-xl border-l-purple-400">
+                        <div class="flex justify-between text-[10px] font-extrabold text-slate-300 font-servo truncate"><span id="lbl-cdyn">Cdyn</span><span id="lbl-p01">P0.1</span></div>
+                        <div class="flex items-baseline justify-between mt-0.5 gap-1 whitespace-nowrap"><span id="m-cdyn" class="metric-dual-primary font-extrabold font-servo text-purple-400">30.0</span><span id="m-p01" class="metric-dual-secondary font-extrabold font-servo text-rose-300">-1.8</span></div>
+                    </div>
+                    <div class="servo-metric-box p-1.5 rounded-xl border-l-amber-400 col-span-2">
+                        <div class="flex justify-between items-center text-[10px] font-extrabold text-slate-300 font-servo"><span id="lbl-rsbi" class="truncate">RSBI (浅速呼吸指数)</span><span id="m-rsbi-status" class="text-[9px] px-1 py-0.2 rounded bg-emerald-950 text-emerald-300 font-sans shrink-0">良好(&lt;105)</span></div>
+                        <div class="flex items-baseline justify-between mt-0.5"><span id="m-rsbi" class="metric-single-val font-extrabold font-servo text-emerald-400">42</span><span id="m-vte-per-kg" class="text-xs font-extrabold font-servo text-cyan-300">VTe: 6.8 mL/kg PBW</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 3. ダイレクト設定タイルバー -->
+            <div class="bg-[#10141d] p-1.5 border-t-2 border-slate-800">
+                <div class="flex justify-between items-center mb-1 text-[11px]">
+                    <span id="lbl-tile-guide" class="font-extrabold text-emerald-400 flex items-center gap-1 truncate"><span>👆</span> <span class="truncate">タイルをタップして調整</span></span>
+                    <span class="text-slate-200 font-servo whitespace-nowrap shrink-0 text-xs pl-1"><span id="lbl-bar-ie">設定 I:E</span> = <strong id="bar-ie-preview" class="text-yellow-300">1:3.0</strong></span>
+                </div>
+                <div id="tile-grid" class="grid grid-cols-4 sm:grid-cols-7 gap-1 text-center font-servo"></div>
+
+                <!-- パラメータ調整ポップアップ -->
+                <div id="param-editor-popup" class="hidden mt-1.5 bg-[#181f2c] border-2 border-emerald-400 rounded-xl p-2.5 shadow-2xl">
+                    <div class="flex justify-between items-center mb-1.5 pb-1 border-b border-slate-700 gap-1.5">
+                        <div class="min-w-0">
+                            <span id="editor-title" class="text-xs sm:text-sm font-extrabold text-emerald-400 block truncate">吸気時間 (Ti)</span>
+                            <span id="editor-range-info" class="text-[10px] text-slate-300 font-servo block">[0.40〜2.50s]</span>
+                        </div>
+                        <button id="btn-editor-ok" onclick="closeParamEditor()" class="px-3 py-1 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold rounded text-xs shrink-0 shadow active:scale-95">✓ 決定</button>
+                    </div>
+                    <div class="editor-controls-wrap flex flex-col sm:flex-row items-center gap-2">
+                        <div class="flex items-center justify-between sm:justify-center gap-1 shrink-0 w-full sm:w-auto">
+                            <button id="btn-step-minus-large" onclick="stepActiveParam(-5)" class="h-9 px-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-xs font-servo font-extrabold border border-slate-600 active:scale-95">-5</button>
+                            <button id="btn-step-minus" onclick="stepActiveParam(-1)" class="w-9 h-9 bg-slate-800 hover:bg-slate-700 text-emerald-400 rounded text-sm font-servo font-extrabold border border-emerald-500/60 active:scale-95">-1</button>
+                            <div class="flex-1 sm:w-24 text-center bg-slate-950 py-0.5 px-1 rounded border border-emerald-400">
+                                <span id="editor-current-val" class="text-xl sm:text-2xl font-extrabold font-servo text-emerald-400">1.00</span>
+                                <span id="editor-current-unit" class="text-[9px] font-servo text-slate-300 block leading-tight">s</span>
+                            </div>
+                            <button id="btn-step-plus" onclick="stepActiveParam(1)" class="w-9 h-9 bg-slate-800 hover:bg-slate-700 text-emerald-400 rounded text-sm font-servo font-extrabold border border-emerald-500/60 active:scale-95">+1</button>
+                            <button id="btn-step-plus-large" onclick="stepActiveParam(5)" class="h-9 px-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-xs font-servo font-extrabold border border-slate-600 active:scale-95">+5</button>
+                        </div>
+                        <div class="w-full space-y-1">
+                            <input id="editor-slider" type="range" min="0.40" max="2.50" step="0.05" value="1.00" oninput="onEditorSliderInput(this.value)" class="w-full h-2.5 bg-slate-700 rounded cursor-pointer">
+                            <div class="flex flex-wrap justify-between text-[10px] font-servo text-slate-200 bg-slate-950 px-2 py-1 rounded border border-slate-800 gap-0.5">
+                                <span><span id="lbl-prev-cycle">周期</span>: <strong id="prev-ttot" class="text-white">4.00s</strong></span>
+                                <span>Ti:<strong id="prev-ti" class="text-cyan-300">1.00s</strong> / Te:<strong id="prev-te" class="text-emerald-300">3.00s</strong></span>
+                                <span>I:E = <strong id="prev-ie" class="text-yellow-300">1:3.0</strong></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 換気モード選択モーダル -->
+    <div id="mode-modal" class="fixed inset-0 bg-black/85 z-50 hidden flex items-center justify-center p-3">
+        <div class="bg-[#181c24] border-2 border-emerald-500 rounded-2xl max-w-md w-full p-3.5 shadow-2xl space-y-1.5 max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center border-b border-slate-700 pb-1.5">
+                <div><h3 id="lbl-modal-title" class="text-sm font-extrabold text-emerald-400 font-servo">換気モード選択</h3><p id="lbl-modal-sub" class="text-[10px] text-slate-300">選択すると対応するパラメータに切り替わります</p></div>
+                <button id="btn-modal-close" onclick="closeModeModal()" class="text-slate-200 hover:text-white text-xs font-extrabold px-2 py-0.5 bg-slate-800 rounded">✕ 閉じる</button>
+            </div>
+            <div class="grid grid-cols-1 gap-1 text-xs">
+                <button onclick="selectVentMode('PCV')" class="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-left flex justify-between items-center">
+                    <div><strong class="text-emerald-400 font-servo">1. PCV</strong><p id="desc-m-pcv" class="text-[10px] text-slate-300">従圧式強制換気（PC, PEEP, RR, Ti 等）</p></div><span class="text-emerald-400 font-extrabold">選択 ▸</span>
+                </button>
+                <button onclick="selectVentMode('VCV')" class="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-left flex justify-between items-center">
+                    <div><strong class="text-emerald-400 font-servo">2. VCV</strong><p id="desc-m-vcv" class="text-[10px] text-slate-300">従量式強制換気（VT, PEEP, RR, Ti, Tpause）</p></div><span class="text-emerald-400 font-extrabold">選択 ▸</span>
+                </button>
+                <button onclick="selectVentMode('SIMV(PC)+PS')" class="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-left flex justify-between items-center">
+                    <div><strong class="text-emerald-400 font-servo">3. SIMV(PC)+PS</strong><p id="desc-m-simvpc" class="text-[10px] text-slate-300">圧制御SIMV＋PS（SIMV回数, PC, PS, Ti）</p></div><span class="text-emerald-400 font-extrabold">選択 ▸</span>
+                </button>
+                <button onclick="selectVentMode('SIMV(VC)+PS')" class="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-left flex justify-between items-center">
+                    <div><strong class="text-emerald-400 font-servo">4. SIMV(VC)+PS</strong><p id="desc-m-simvvc" class="text-[10px] text-slate-300">量制御SIMV＋PS（SIMV回数, 設定VT, PS）</p></div><span class="text-emerald-400 font-extrabold">選択 ▸</span>
+                </button>
+                <button onclick="selectVentMode('SPONT+PS')" class="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-left flex justify-between items-center">
+                    <div><strong class="text-emerald-400 font-servo">5. SPONT+PS</strong><p id="desc-m-spont" class="text-[10px] text-slate-300">自発呼吸＋PS（PS above PEEP, PEEP, Tapnea）</p></div><span class="text-emerald-400 font-extrabold">選択 ▸</span>
+                </button>
+                <button onclick="selectVentMode('PRVC')" class="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-left flex justify-between items-center">
+                    <div><strong class="text-emerald-400 font-servo">6. PRVC</strong><p id="desc-m-prvc" class="text-[10px] text-slate-300">圧制御容量保証（Target VTに合わせ自動調整）</p></div><span class="text-emerald-400 font-extrabold">選択 ▸</span>
+                </button>
+                <button onclick="selectVentMode('APRV')" class="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-left flex justify-between items-center">
+                    <div><strong class="text-emerald-400 font-servo">7. APRV</strong><p id="desc-m-aprv" class="text-[10px] text-slate-300">気道内圧解放換気（Phigh, Plow, Thigh, Tlow）</p></div><span class="text-emerald-400 font-extrabold">選択 ▸</span>
+                </button>
+            </div>
+        </div>
+    </div>
+<!-- 統合スクリプト -->
+    <script>
+        // ============================================================================
+        // 1. パラメータ仕様定義
+        // ============================================================================
+        const PARAM_SPECS = {
+            fio2:    { title: 'O2 濃度 (FiO2)', titleEn: 'O2 conc. (FiO2)', short: 'O2 conc.', shortEn: 'O2 conc.', min: 21, max: 100, step: 1, largeStep: 5, unit: '%', prop: 'fio2', color: 'text-emerald-400' },
+            peep:    { title: 'PEEP (呼気終末陽圧)', titleEn: 'PEEP', short: 'PEEP', shortEn: 'PEEP', min: 0, max: 25, step: 1, largeStep: 2, unit: 'cmH2O', prop: 'peep', color: 'text-yellow-400' },
+            rr:      { title: '呼吸回数 (RR)', titleEn: 'Respiratory Rate (f)', short: 'RR', shortEn: 'f (CMV)', min: 6, max: 50, step: 1, largeStep: 4, unit: 'b/min', unitEn: '1/min', prop: 'setRR', color: 'text-emerald-400' },
+            simvRR:  { title: 'SIMV 強制換気回数', titleEn: 'SIMV Rate', short: 'SIMV RR', shortEn: 'f (SIMV)', min: 4, max: 40, step: 1, largeStep: 4, unit: 'b/min', unitEn: '1/min', prop: 'setRR', color: 'text-emerald-400' },
+            pc:      { title: 'PC above PEEP (駆動圧)', titleEn: 'PC above PEEP', short: 'PC above', shortEn: 'PC above', min: 2, max: 35, step: 1, largeStep: 2, unit: 'cmH2O', prop: 'pc', color: 'text-yellow-400' },
+            ps:      { title: 'PS above PEEP (サポート圧)', titleEn: 'PS above PEEP', short: 'PS above', shortEn: 'PS above', min: 0, max: 30, step: 1, largeStep: 2, unit: 'cmH2O', prop: 'ps', color: 'text-yellow-300' },
+            vt:      { title: '一回換気量 (VT / Target VT)', titleEn: 'Tidal Volume (VT)', short: 'VT (換気量)', shortEn: 'VT', min: 150, max: 800, step: 10, largeStep: 50, unit: 'mL', prop: 'targetVt', color: 'text-sky-400' },
+            ti:      { title: '吸気時間 (Ti)', titleEn: 'Inspiration Time (Ti)', short: 'Ti (吸気)', shortEn: 'Ti', min: 0.40, max: 2.50, step: 0.05, largeStep: 0.20, unit: 's', prop: 'ti', color: 'text-cyan-300' },
+            tpause:  { title: '吸気ポーズ時間 (Tpause)', titleEn: 'Pause Time (Tpause)', short: 'Tpause', shortEn: 'Tpause', min: 0.00, max: 0.50, step: 0.05, largeStep: 0.10, unit: 's', prop: 'tpause', color: 'text-slate-200' },
+            trig:    { title: 'フロートリガー感度 (Trigg.)', titleEn: 'Trigger Flow', short: 'Trigg.Flow', shortEn: 'Trigg.Flow', min: 0.5, max: 8.0, step: 0.5, largeStep: 1.0, unit: 'L/min', prop: 'trig', color: 'text-purple-300' },
+            rise:    { title: '立ち上がり時間 (Tinsp.rise)', titleEn: 'Insp. Rise Time', short: 'Tinsp.rise', shortEn: 'Tinsp.rise', min: 0.00, max: 0.40, step: 0.05, largeStep: 0.10, unit: 's', prop: 'rise', color: 'text-slate-200' },
+            endinsp: { title: 'サイクルオフ基準 (End insp.)', titleEn: 'End Inspiration (%)', short: 'End insp.', shortEn: 'End insp.', min: 5, max: 70, step: 5, largeStep: 10, unit: '%', prop: 'endInsp', color: 'text-slate-200' },
+            tapnea:  { title: '無呼吸バックアップ時間 (Tapnea)', titleEn: 'Apnea Time (Tapnea)', short: 'Tapnea', shortEn: 'Tapnea', min: 5, max: 30, step: 5, largeStep: 10, unit: 's', prop: 'tapnea', color: 'text-amber-300' },
+            phigh:   { title: 'APRV 高圧レベル (Phigh)', titleEn: 'APRV Phigh', short: 'Phigh', shortEn: 'Phigh', min: 10, max: 35, step: 1, largeStep: 2, unit: 'cmH2O', prop: 'phigh', color: 'text-yellow-400' },
+            plow:    { title: 'APRV 低圧レベル (Plow)', titleEn: 'APRV Plow', short: 'Plow', shortEn: 'Plow', min: 0, max: 15, step: 1, largeStep: 2, unit: 'cmH2O', prop: 'plow', color: 'text-yellow-200' },
+            thigh:   { title: 'APRV 高圧維持時間 (Thigh)', titleEn: 'APRV Thigh', short: 'Thigh', shortEn: 'Thigh', min: 1.5, max: 7.0, step: 0.1, largeStep: 0.5, unit: 's', prop: 'thigh', color: 'text-cyan-300' },
+            tlow:    { title: 'APRV リリース時間 (Tlow)', titleEn: 'APRV Tlow', short: 'Tlow', shortEn: 'Tlow', min: 0.20, max: 1.20, step: 0.05, largeStep: 0.15, unit: 's', prop: 'tlow', color: 'text-emerald-300' }
+        };
+
+        const MODE_TILES = {
+            'PCV':         ['fio2', 'peep', 'rr', 'pc', 'ti', 'trig', 'rise'],
+            'VCV':         ['fio2', 'peep', 'rr', 'vt', 'ti', 'tpause', 'trig'],
+            'SIMV(PC)+PS': ['fio2', 'peep', 'simvRR', 'pc', 'ps', 'ti', 'endinsp'],
+            'SIMV(VC)+PS': ['fio2', 'peep', 'simvRR', 'vt', 'ps', 'ti', 'endinsp'],
+            'SPONT+PS':    ['fio2', 'peep', 'ps', 'endinsp', 'trig', 'rise', 'tapnea'],
+            'PRVC':        ['fio2', 'peep', 'rr', 'vt', 'ti', 'trig', 'rise'],
+            'APRV':        ['fio2', 'phigh', 'plow', 'thigh', 'tlow', 'trig', 'rise']
+        };
+
+        // ============================================================================
+        // 2. 状態管理
+        // ============================================================================
+        const state = {
+            lang: 'ja', screenSize: 'mobile', currentTab: '3waves', isFrozen: false,
+            yAutoScale: true, timeWindowSec: 10, activeParamKey: null, soundEnabled: false,
+            sex: 'female', heightCm: 160, pbwKg: 52.4,
+            mode: 'PCV', fio2: 40, peep: 5, setRR: 15, pc: 12, ps: 10, targetVt: 360,
+            ti: 1.00, te: 3.00, tpause: 0.00, trig: 2.0, rise: 0.15, endInsp: 25, tapnea: 15,
+            phigh: 22, plow: 4, thigh: 4.5, tlow: 0.55,
+            apneaBackupEnabled: true, apneaBackupActive: false, apneaDurationSec: 0,
+            caseKey: 'normal', caseLabel: '健康な肺 (Normal)', complianceFactor: 1.0, airwayType: 'normal', spontRRSetting: 14,
+            alarmLimits: { pawHigh: 30, pawLow: 10, mvHigh: 8.5, mvLow: 3.8, vtHigh: 550, vtLow: 260, rrHigh: 30, rrLow: 8 },
+            baseVt: 355, liveVte: 355, liveVti: 360, liveMve: 5.3, liveMvi: 5.4,
+            rsbi: 42, totalRR: 15, srr: 14, ppeak: 18, pplat: 17, autoPeep: 0.0, peepTot: 5.0, cdyn: 30.0, p01: -1.8,
+            expResidualFlow: 0.0, trigStatus: 'normal', activeAuscMarker: null, currentAuscView: 'front',
+            currentABG: { ph: 7.40, paco2: 40.0, pao2: 95.0, hco3: 24.0, sao2: 98, pfRatio: 238 }, abgHistory: []
+        };
+
+        // ============================================================================
+        // 3. I18N 辞書 (言語切替対応)
+        // ============================================================================
+        const I18N = {
+            ja: {
+                dom: {
+                    'lbl-width': '幅:', 'btn-reset': '🔄 初期化', 'lbl-sex': '性別:', 'opt-sex-m': '男性', 'opt-sex-f': '女性',
+                    'lbl-height': '身長:', 'lbl-target-vt': '目標VT (6-8)', 'lbl-case': '症例:',
+                    'opt-case-normal': '健康な肺 (Normal)', 'opt-case-copd': 'COPD急性増悪 (過膨張・Wheezes)',
+                    'opt-case-asthma': '気管支喘息重積 (気道狭窄)', 'opt-case-ards': '重症ARDS (極低コンプライアンス)',
+                    'opt-case-edema': '心原性肺水腫 (低酸素・Crackles)', 'opt-case-secretion': '中枢気道分泌物貯留 (痰・水泡音)',
+                    'opt-case-one': '片肺挿管 (右深部迷入)', 'opt-case-pnu': '右気胸 (緊張性初期)',
+                    'lbl-spont': '自発:', 'lbl-mode-btn': 'モード ▾', 'btn-tab-3waves': '3波形', 'btn-tab-loops': 'ループ',
+                    'btn-tab-physical': '👤 所見', 'btn-tab-alarms': 'アラーム', 'btn-tab-abg': '🩸血ガス',
+                    'lbl-xaxis': '横軸:', 'btn-yscale-mode': '縦軸: Auto', 'lbl-tile-guide': '👆 タイルをタップして調整',
+                    'lbl-bar-ie': '設定 I:E', 'btn-editor-ok': '✓ 決定', 'lbl-prev-cycle': '周期',
+                    'lbl-ppeak': 'Ppeak', 'lbl-pplat': '(Pplat)', 'lbl-peep': 'PEEPtot', 'lbl-autopeep': 'Auto',
+                    'lbl-rr': 'RR (b/m)', 'lbl-srr': '(自発sRR)', 'lbl-o2': 'O2 (%)', 'lbl-tite': 'Ti/Te',
+                    'lbl-vt-unit': '(mL)', 'lbl-mv-unit': '(L/m)', 'lbl-ie-set': '設定I:E', 'lbl-ie-meas': '(実測)',
+                    'lbl-cdyn': 'Cdyn', 'lbl-p01': 'P0.1', 'lbl-rsbi': 'RSBI (浅速呼吸指数)',
+                    'lbl-phys-init': '左のボタンまたは右の写真スポットをタップしてください。', 'lbl-phys-title': '👤 視診・触診・その他',
+                    'btn-phys-1': '1. 頸静脈怒張 (JVD)', 'btn-phys-2': '2. 皮下気腫の触知', 'btn-phys-3': '3. 胸郭の動き・対称性',
+                    'btn-phys-4': '4. 努力呼吸・陥没呼吸', 'btn-phys-5': '5. 腹壁緊張度', 'btn-phys-6': '6. 口唇色・チアノーゼ',
+                    'btn-phys-7': '7. 末梢循環 (CRT)', 'btn-phys-8': '8. 気管チューブ位置', 'btn-phys-9': '9. カフ圧・リーク音',
+                    'btn-phys-10': '10. 同調性・鎮静 (RASS)', 'lbl-ausc-title': '🎧 聴診 (解剖順序準拠)',
+                    'btn-ausc-front': '前面', 'btn-ausc-back': '背面',
+                    'lbl-leg-trachea': '気管(支)音', 'lbl-leg-broncho': '気管支肺胞音', 'lbl-leg-vesic': '肺胞音',
+                    'lbl-alarm-title': 'アラーム閾値管理 (Alarm Limits)', 'lbl-alarm-sub': '臨床基準に準拠した5大監視アラーム',
+                    'btn-alarm-auto': '⚡ 推奨値で自動設定', 'lbl-alm-paw': '気道内圧 (Paw)', 'lbl-alm-paw-h': '高圧 (HIP / Paw High)',
+                    'lbl-alm-paw-h-hint': '目安: ピーク圧+10', 'lbl-alm-paw-l': '低圧 (LIP / Paw Low)', 'lbl-alm-paw-l-hint': '目安: 安定時70%',
+                    'lbl-alm-mv': '分時換気量 (MVe)', 'lbl-alm-mv-h': '上限 (MV High)', 'lbl-alm-mv-h-hint': '目安: 実測+25%',
+                    'lbl-alm-mv-l': '下限 (MV Low)', 'lbl-alm-mv-l-hint': '目安: 実測75%', 'lbl-alm-vt': '1回換気量 (VTe)',
+                    'lbl-alm-vt-h': '上限 (VT High)', 'lbl-alm-vt-h-hint': '目安: 実測+30%', 'lbl-alm-vt-l': '下限 (VT Low)',
+                    'lbl-alm-vt-l-hint': '目安: 実測70%', 'lbl-alm-rr': '呼吸回数 (RR)', 'lbl-alm-rr-h': '上限 (RR High)',
+                    'lbl-alm-rr-h-hint': '目安: 普段+12', 'lbl-alm-rr-l': '下限 (RR Low)', 'lbl-alm-rr-l-hint': '目安: 普段-7',
+                    'lbl-abg-title': '動脈血液ガス分析 (ABG)', 'abg-status-sub': '現在の換気・酸素化設定をリアルタイム評価',
+                    'btn-abg-run': '💉 採血・再評価', 'btn-abg-clear': 'クリア', 'lbl-abg-pf': 'P/F 比',
+                    'lbl-abg-hist': '経時的推移ログ (History)', 'lbl-abg-hist-sub': '最新5件',
+                    'th-time': '時刻', 'th-set': '設定(Fi/PEEP)', 'th-pf': 'P/F比', 'th-judge': '判定',
+                    'lbl-modal-title': '換気モード選択', 'lbl-modal-sub': '選択すると対応するパラメータに切り替わります',
+                    'desc-m-pcv': '従圧式強制換気（PC, PEEP, RR, Ti 等）', 'desc-m-vcv': '従量式強制換気（VT, PEEP, RR, Ti, Tpause）',
+                    'desc-m-simvpc': '圧制御SIMV＋PS（SIMV回数, PC, PS, Ti）', 'desc-m-simvvc': '量制御SIMV＋PS（SIMV回数, 設定VT, PS）',
+                    'desc-m-spont': '自発呼吸＋PS（PS above PEEP, PEEP, Tapnea）', 'desc-m-prvc': '圧制御容量保証（Target VTに合わせ自動調整）',
+                    'desc-m-aprv': '気道内圧解放換気（Phigh, Plow, Thigh, Tlow）', 'btn-modal-close': '✕ 閉じる',
+                    'lbl-apnea-alert': '🚨 APNEA BACKUP ACTIVE — PCV換気中', 'btn-apnea-reset': 'SPONT復帰'
+                },
+                rsbiOk: "良好(<105)", rsbiWarn: "浅速呼吸注意", rsbiApnea: "無呼吸/停止",
+                freeze: "フリーズ", resume: "再開 (Resume)", freezeBadge: "一時停止中",
+                yAuto: "縦軸: Auto", yFixed: "縦軸: 固定"
+            },
+            en: {
+                dom: {
+                    'lbl-width': 'Width:', 'btn-reset': '🔄 Reset', 'lbl-sex': 'Sex:', 'opt-sex-m': 'Male', 'opt-sex-f': 'Female',
+                    'lbl-height': 'Height:', 'lbl-target-vt': 'Target VT (6-8)', 'lbl-case': 'Case:',
+                    'opt-case-normal': 'Normal Lungs', 'opt-case-copd': 'COPD Exacerbation',
+                    'opt-case-asthma': 'Severe Asthma', 'opt-case-ards': 'Severe ARDS',
+                    'opt-case-edema': 'Cardiogenic Pulmonary Edema', 'opt-case-secretion': 'Airway Secretions',
+                    'opt-case-one': 'Right Mainstem Intubation', 'opt-case-pnu': 'Tension Pneumothorax (R)',
+                    'lbl-spont': 'Spont:', 'lbl-mode-btn': 'Mode ▾', 'btn-tab-3waves': 'Waves', 'btn-tab-loops': 'Loops',
+                    'btn-tab-physical': '👤 Findings', 'btn-tab-alarms': 'Alarms', 'btn-tab-abg': '🩸 ABG',
+                    'lbl-xaxis': 'Sweep:', 'btn-yscale-mode': 'Y-Scale: Auto', 'lbl-tile-guide': '👆 Tap tile to adjust',
+                    'lbl-bar-ie': 'Set I:E', 'btn-editor-ok': '✓ Accept', 'lbl-prev-cycle': 'Ttot',
+                    'lbl-ppeak': 'Ppeak (cmH2O)', 'lbl-pplat': '(Pplat)', 'lbl-peep': 'PEEPtot', 'lbl-autopeep': '(PEEPi)',
+                    'lbl-rr': 'ftot (1/min)', 'lbl-srr': '(fspont)', 'lbl-o2': 'O2 conc. (%)', 'lbl-tite': 'Ti/Te',
+                    'lbl-vt-unit': '(mL)', 'lbl-mv-unit': '(L/min)', 'lbl-ie-set': 'I:E (set)', 'lbl-ie-meas': '(meas)',
+                    'lbl-cdyn': 'Cdyn (mL/cmH2O)', 'lbl-p01': 'P0.1', 'lbl-rsbi': 'RSBI (f/VT)',
+                    'lbl-phys-init': 'Select a button on the left or an auscultation point on the right.', 'lbl-phys-title': '👤 Physical Findings',
+                    'btn-phys-1': '1. JVD', 'btn-phys-2': '2. Subcutaneous Emphysema', 'btn-phys-3': '3. Chest Excursion',
+                    'btn-phys-4': '4. Retractions / WOB', 'btn-phys-5': '5. Abdomen', 'btn-phys-6': '6. Cyanosis / Skin',
+                    'btn-phys-7': '7. Capillary Refill (CRT)', 'btn-phys-8': '8. ETT Position', 'btn-phys-9': '9. Cuff Leak',
+                    'btn-phys-10': '10. Sedation (RASS)', 'lbl-ausc-title': '🎧 Auscultation',
+                    'btn-ausc-front': 'Anterior', 'btn-ausc-back': 'Posterior',
+                    'lbl-leg-trachea': 'Tracheal', 'lbl-leg-broncho': 'Bronchovesicular', 'lbl-leg-vesic': 'Vesicular',
+                    'lbl-alarm-title': 'Alarm Limits', 'lbl-alarm-sub': 'Standard ventilator alarm settings',
+                    'btn-alarm-auto': '⚡ Auto-Set Limits', 'lbl-alm-paw': 'Airway Pressure (Paw)', 'lbl-alm-paw-h': 'High Pressure (HIP)',
+                    'lbl-alm-paw-h-hint': 'Target: Ppeak + 10', 'lbl-alm-paw-l': 'Low Pressure (LIP)', 'lbl-alm-paw-l-hint': 'Target: 70% of stable',
+                    'lbl-alm-mv': 'Minute Volume (MVe)', 'lbl-alm-mv-h': 'High MV', 'lbl-alm-mv-h-hint': 'Target: Meas + 25%',
+                    'lbl-alm-mv-l': 'Low MV', 'lbl-alm-mv-l-hint': 'Target: Meas 75%', 'lbl-alm-vt': 'Tidal Volume (VTe)',
+                    'lbl-alm-vt-h': 'High VT', 'lbl-alm-vt-h-hint': 'Target: Meas + 30%', 'lbl-alm-vt-l': 'Low VT',
+                    'lbl-alm-vt-l-hint': 'Target: Meas 70%', 'lbl-alm-rr': 'Respiratory Rate (RR)', 'lbl-alm-rr-h': 'High RR',
+                    'lbl-alm-rr-h-hint': 'Target: Meas + 12', 'lbl-alm-rr-l': 'Low RR', 'lbl-alm-rr-l-hint': 'Target: Meas - 7',
+                    'lbl-abg-title': 'Arterial Blood Gas (ABG)', 'abg-status-sub': 'Real-time evaluation of ventilation & oxygenation',
+                    'btn-abg-run': '💉 Draw & Analyze', 'btn-abg-clear': 'Clear', 'lbl-abg-pf': 'P/F Ratio',
+                    'lbl-abg-hist': 'ABG History', 'lbl-abg-hist-sub': 'Last 5 records',
+                    'th-time': 'Time', 'th-set': 'Set (Fi/PEEP)', 'th-pf': 'P/F', 'th-judge': 'Status',
+                    'lbl-modal-title': 'Ventilation Mode', 'lbl-modal-sub': 'Select a mode to switch active parameters',
+                    'desc-m-pcv': 'Pressure Control Ventilation (PC, PEEP, RR, Ti)', 'desc-m-vcv': 'Volume Control Ventilation (VT, PEEP, RR, Ti)',
+                    'desc-m-simvpc': 'Synchronized Intermittent Mandatory Vent. (PC) + PS', 'desc-m-simvvc': 'Synchronized Intermittent Mandatory Vent. (VC) + PS',
+                    'desc-m-spont': 'Spontaneous Breathing with Pressure Support', 'desc-m-prvc': 'Pressure Regulated Volume Control',
+                    'desc-m-aprv': 'Airway Pressure Release Ventilation', 'btn-modal-close': '✕ Close',
+                    'lbl-apnea-alert': '🚨 APNEA BACKUP ACTIVE — Venting in PCV', 'btn-apnea-reset': 'Reset SPONT'
+                },
+                rsbiOk: "Optimal (<105)", rsbiWarn: "High RSBI", rsbiApnea: "APNEA / NO VENT",
+                freeze: "Freeze", resume: "Resume", freezeBadge: "FROZEN",
+                yAuto: "Y-Scale: Auto", yFixed: "Y-Scale: Fixed"
+            }
+        };
+
+        function setLanguage(lang) {
+            state.lang = lang;
+            const dict = I18N[lang];
+            
+            for (const [id, text] of Object.entries(dict.dom)) {
+                const el = document.getElementById(id);
+                if (el) el.innerHTML = text; 
+            }
+
+            document.getElementById('btn-lang-jp').className = lang === 'ja' ? "px-1.5 py-0.5 rounded text-[10px] font-extrabold bg-emerald-600 text-white shadow transition" : "px-1.5 py-0.5 rounded text-[10px] font-extrabold text-slate-400 hover:text-white transition";
+            document.getElementById('btn-lang-en').className = lang === 'en' ? "px-1.5 py-0.5 rounded text-[10px] font-extrabold bg-emerald-600 text-white shadow transition" : "px-1.5 py-0.5 rounded text-[10px] font-extrabold text-slate-400 hover:text-white transition";
+
+            document.getElementById('btn-yscale-mode').textContent = state.yAutoScale ? dict.yAuto : dict.yFixed;
+            const freezeBtn = document.getElementById('btn-freeze');
+            freezeBtn.innerHTML = state.isFrozen ? `<span>▶️</span> <span id="freeze-btn-text">${dict.resume}</span>` : `<span>❄️</span> <span id="freeze-btn-text">${dict.freeze}</span>`;
+            document.getElementById('freeze-status-badge').textContent = dict.freezeBadge;
+
+            renderModeTiles();
+            if (state.activeParamKey) openParamEditor(state.activeParamKey);
+            updateMonitorDOM(state.totalRR);
+        }
+
+        // ============================================================================
+        // 4. 画面サイズ・レイアウト制御
+        // ============================================================================
+        function setScreenSize(sizeMode) {
+            state.screenSize = sizeMode;
+            const container = document.getElementById('app-container');
+            const simInchBar = document.getElementById('sim-inch-bar');
+
+            if (sizeMode === '10inch') {
+                container.style.removeProperty('max-width');
+                container.classList.remove('view-mobile-frame');
+                container.style.maxWidth = '1080px';
+                simInchBar.classList.add('hidden');
+                document.getElementById('btn-view-10').className = "px-1.5 py-0.5 rounded text-[10px] font-extrabold bg-emerald-600 text-white shadow transition";
+                document.getElementById('btn-view-mobile').className = "px-1.5 py-0.5 rounded text-[10px] font-extrabold text-slate-400 transition hover:text-white";
+                document.body.classList.remove('is-mobile-sim');
+            } else {
+                container.classList.add('view-mobile-frame');
+                container.style.maxWidth = sizeMode === 'mobile' ? '448px' : sizeMode;
+                simInchBar.classList.remove('hidden');
+                document.getElementById('btn-view-mobile').className = "px-1.5 py-0.5 rounded text-[10px] font-extrabold bg-emerald-600 text-white shadow transition";
+                document.getElementById('btn-view-10').className = "px-1.5 py-0.5 rounded text-[10px] font-extrabold text-slate-400 transition hover:text-white";
+                document.body.classList.add('is-mobile-sim');
+            }
+
+            setTimeout(() => {
+                if (window.pressureChart) {
+                    pressureChart.resize(); flowChart.resize(); volumeChart.resize();
+                    if(window.pvLoopChart) { pvLoopChart.resize(); fvLoopChart.resize(); }
+                }
+            }, 60);
+        }
+
+        function setMobileMaxWidth(px) {
+            setScreenSize(px + 'px');
+            ['360','412','448'].forEach(w => {
+                const btn = document.getElementById('btn-w-' + w);
+                if (btn) {
+                    if (w == px) btn.className = "px-1 py-0.5 bg-emerald-900/60 text-emerald-300 rounded border border-emerald-600/60 transition font-bold";
+                    else btn.className = "px-1 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded border border-slate-700 transition";
+                }
+            });
+        }
+
+        // ============================================================================
+        // 5. 身体所見・聴診データマスター & ロジック
+        // ============================================================================
+        const SPOT_ANATOMY = {
+            front: {
+                1: { name: "右鎖骨上窩", type: "気管(支)音" }, 2: { name: "左鎖骨上窩", type: "気管(支)音" },
+                3: { name: "左第2肋間(胸骨傍)", type: "気管(支)音" }, 4: { name: "右第2肋間(胸骨傍)", type: "気管(支)音" },
+                5: { name: "右第3-4肋間", type: "気管支肺胞音" }, 6: { name: "左第3-4肋間", type: "気管支肺胞音" },
+                7: { name: "左第5肋間(前胸部)", type: "肺胞音" }, 8: { name: "右第5肋間(前胸部)", type: "肺胞音" },
+                9: { name: "右下胸部(前腋窩線)", type: "肺胞音" }, 10: { name: "左下胸部(前腋窩線)", type: "肺胞音" }
+            },
+            back: {
+                1: { name: "肩甲間部上部(右)", type: "気管支肺胞音" }, 2: { name: "肩甲間部上部(左)", type: "気管支肺胞音" },
+                3: { name: "肩甲間部中部(左)", type: "気管支肺胞音" }, 4: { name: "肩甲間部中部(右)", type: "気管支肺胞音" },
+                5: { name: "肩甲下部(右)", type: "肺胞音" }, 6: { name: "肩甲下部(左)", type: "肺胞音" },
+                7: { name: "肺底部(左)", type: "肺胞音" }, 8: { name: "肺底部(右)", type: "肺胞音" }
+            }
+        };
+
+        const KINPODO_MAIN_URL = "https://www.kinpodo-pub.co.jp/lungsounds/main/index.php";
+
+        const LUNG_SOUNDS_LIB = {
+            s401: { no: "4.01", name: "肺胞音" }, s402: { no: "4.02", name: "気管支音" },
+            s404: { no: "4.04", name: "気管支肺胞音" }, s408: { no: "4.08", name: "呼吸音の減弱" },
+            s409: { no: "4.09", name: "呼吸音の消失" }, s411: { no: "4.11", name: "喘息のウィーズ (Wheezes)" },
+            s415: { no: "4.15", name: "細かい断続性ラ音 (初期)" }, s416: { no: "4.16", name: "著明なファイン・クラックル" },
+            s417: { no: "4.17", name: "心原性肺水腫のファイン・クラックル" }, s418: { no: "4.18", name: "コース・クラックル (水泡音)" }
+        };
+
+        const PHYSICAL_FINDINGS = {
+            normal: { jvd: "頸静脈怒張なし。", emphysema: "皮下気腫の触知なし。", chest_motion: "左右対称に拡張。", retraction: "陥没呼吸なし。", abdomen: "軟・平坦。", skin: "チアノーゼなし。", crt: "CRT 2秒未満。", tube: "門歯レベル22cm固定。", cuff: "カフリークなし。", rass: "RASS 0 (清明)" },
+            copd: { jvd: "呼気時に軽度怒張。", emphysema: "なし。", chest_motion: "樽状胸郭。過膨張。", retraction: "胸鎖乳突筋の使用あり。", abdomen: "吸気時腹部奇異運動あり。", skin: "チアノーゼ傾向。", crt: "2秒。", tube: "22cm固定。", cuff: "リークなし。", rass: "RASS -1" },
+            asthma: { jvd: "呼気時に怒張。", emphysema: "なし。", chest_motion: "過膨張。呼気延長著明。", retraction: "著明な陥没呼吸。", abdomen: "筋性防御様緊張。", skin: "チアノーゼあり。", crt: "2秒。", tube: "22cm固定。", cuff: "リークなし。", rass: "RASS -2" },
+            ards: { jvd: "高PEEP負荷により軽度怒張。", emphysema: "なし。", chest_motion: "コンプライアンス著減により拡張不良。", retraction: "著明な陥没呼吸。", abdomen: "硬。", skin: "著明なチアノーゼ。", crt: "3秒。", tube: "23cm固定。", cuff: "リークなし。", rass: "RASS -4 (深鎮静)" },
+            edema: { jvd: "内頸静脈の著明な怒張。", emphysema: "なし。", chest_motion: "努力様拡張。", retraction: "陥没呼吸あり。", abdomen: "軟。", skin: "冷汗、四肢末梢冷感。", crt: "3秒以上。", tube: "22cm固定。", cuff: "ピンク色泡沫状分泌物流出。", rass: "RASS -1" },
+            secretion: { jvd: "なし。", emphysema: "なし。", chest_motion: "胸郭振動(ラトリング)触知。", retraction: "呼吸促迫。", abdomen: "軟。", skin: "軽度チアノーゼ。", crt: "2秒。", tube: "22cm固定。", cuff: "気道内分泌物多量。", rass: "RASS -1" },
+            one_lung: { jvd: "なし。", emphysema: "なし。", chest_motion: "右胸郭のみ過膨張、左胸郭の挙上消失。", retraction: "陥没呼吸なし。", abdomen: "軟。", skin: "軽度チアノーゼ。", crt: "2秒。", tube: "門歯レベル27cm(右主気管支深部迷入)。", cuff: "リークなし。", rass: "RASS -2" },
+            pneumothorax: { jvd: "右頸静脈の怒張あり。", emphysema: "右前胸部に皮下気腫(握雪感)を広範に触知。", chest_motion: "右胸郭の拡張不良・呼吸音消失。", retraction: "呼吸促迫・不穏。", abdomen: "軟。", skin: "チアノーゼあり。", crt: "3秒。", tube: "22cm固定。", cuff: "リークなし。", rass: "RASS -3" }
+        };
+function showPhysicalFinding(key) {
+            const f = PHYSICAL_FINDINGS[state.caseKey] || PHYSICAL_FINDINGS['normal'];
+            const text = f[key] || "特記所見なし。";
+            document.getElementById('assessment-result-panel').innerHTML = `
+                <div class="flex flex-col items-center justify-center w-full h-full p-2">
+                    <span class="text-2xl mb-1">👁️‍🗨️</span>
+                    <p class="text-xs sm:text-sm font-bold text-white leading-relaxed text-center">${text}</p>
+                </div>
+            `;
+        }
+
+        function playLungSound(view, num, element) {
+            if (state.activeAuscMarker) state.activeAuscMarker.classList.remove('point-active');
+            state.activeAuscMarker = element;
+            element.classList.add('point-active');
+
+            const anat = SPOT_ANATOMY[view][num];
+            const caseKey = state.caseKey;
+            const isLeft = (view === 'front' && [2,3,6,7,10].includes(num)) || (view === 'back' && [2,3,6,7].includes(num));
+            
+            let findingText = "";
+            let targetSound = LUNG_SOUNDS_LIB.s401;
+
+            if (caseKey === 'normal') {
+                findingText = `正常な【${anat.type}】を明瞭に聴取。副雑音なし。`;
+                targetSound = anat.type === '気管(支)音' ? LUNG_SOUNDS_LIB.s402 : (anat.type === '気管支肺胞音' ? LUNG_SOUNDS_LIB.s404 : LUNG_SOUNDS_LIB.s401);
+            } 
+            else if (caseKey === 'copd' || caseKey === 'asthma') {
+                findingText = `呼気相の著明な延長と全肺野に高調性の連続性ラ音（Wheezes）を聴取。`;
+                targetSound = LUNG_SOUNDS_LIB.s411;
+            }
+            else if (caseKey === 'edema') {
+                if (anat.type === '肺胞音') {
+                    findingText = `肺胞毛細血管うっ血による吸気終末断続性ラ音（Fine crackles）を聴取。背側・肺底部で顕著。`;
+                    targetSound = LUNG_SOUNDS_LIB.s417;
+                } else {
+                    findingText = `気管・大気道付近：粗い湿性音を聴取。`;
+                    targetSound = LUNG_SOUNDS_LIB.s418;
+                }
+            } 
+            else if (caseKey === 'secretion') {
+                findingText = `中枢気道内に貯留した喀痰による粗いゴロゴロ音（Coarse crackles）を聴取。`;
+                targetSound = LUNG_SOUNDS_LIB.s418;
+            } 
+            else if (caseKey === 'one_lung') {
+                if (isLeft) {
+                    findingText = `【左肺】呼吸音消失。気管チューブの深部迷入により左肺換気が停止。`;
+                    targetSound = LUNG_SOUNDS_LIB.s408;
+                } else {
+                    findingText = `【右肺】過膨張気味の強い気管支肺胞音を聴取。`;
+                    targetSound = LUNG_SOUNDS_LIB.s402;
+                }
+            } 
+            else if (caseKey === 'pneumothorax') {
+                if (!isLeft) {
+                    findingText = `【右肺】胸腔内脱気不全・肺虚脱により呼吸音が著明に減弱〜消失。`;
+                    targetSound = LUNG_SOUNDS_LIB.s408;
+                } else {
+                    findingText = `【左肺】健側呼吸音を聴取。`;
+                    targetSound = LUNG_SOUNDS_LIB.s401;
+                }
+            } else if (caseKey === 'ards') {
+                findingText = `吸気終末の細かい断続性ラ音（Fine crackles）と気道分泌物音を混在して聴取。`;
+                targetSound = LUNG_SOUNDS_LIB.s416;
+            } else {
+                findingText = `正常な【${anat.type}】を聴取。`;
+                targetSound = LUNG_SOUNDS_LIB.s401;
+            }
+
+            const card = document.getElementById('assessment-result-panel');
+            card.innerHTML = `
+                <div class="space-y-1.5 w-full text-left p-1">
+                    <div class="flex justify-between items-center border-b border-slate-700 pb-1">
+                        <span class="text-xs font-bold text-white flex items-center gap-1.5">
+                            <span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>部位：${anat.name}
+                        </span>
+                        <span class="text-[9px] bg-slate-800 text-slate-300 px-1.5 py-0.5 rounded font-bold border border-slate-600">
+                            ${anat.type}
+                        </span>
+                    </div>
+                    <p class="text-[11px] text-slate-200 leading-snug font-bold">${findingText}</p>
+                    <div class="pt-1.5">
+                        <a href="${KINPODO_MAIN_URL}" target="_blank" rel="noopener noreferrer" 
+                           class="block w-full text-center py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-[11px] rounded shadow transition active:scale-95">
+                            🔊 金芳堂を開く ➔ 目次【${targetSound.no} ${targetSound.name}】を再生 ↗
+                        </a>
+                    </div>
+                </div>
+            `;
+        }
+
+        function toggleAuscultationView(view) {
+            state.currentAuscView = view;
+            if (state.activeAuscMarker) {
+                state.activeAuscMarker.classList.remove('point-active');
+                state.activeAuscMarker = null;
+            }
+            if (view === 'front') {
+                document.getElementById('ausc-front').classList.remove('hidden');
+                document.getElementById('ausc-back').classList.add('hidden');
+                document.getElementById('btn-ausc-front').className = "px-2 py-0.5 bg-emerald-600 text-white rounded";
+                document.getElementById('btn-ausc-back').className = "px-2 py-0.5 text-slate-400 rounded";
+            } else {
+                document.getElementById('ausc-front').classList.add('hidden');
+                document.getElementById('ausc-back').classList.remove('hidden');
+                document.getElementById('btn-ausc-front').className = "px-2 py-0.5 text-slate-400 rounded";
+                document.getElementById('btn-ausc-back').className = "px-2 py-0.5 bg-emerald-600 text-white rounded";
+            }
+        }
+
+        // ============================================================================
+        // 6. 症例・身体データ適用
+        // ============================================================================
+        function applyCasePreset(presetKey) {
+            state.caseKey = presetKey;
+            if (presetKey === 'asthma') {
+                state.complianceFactor = 0.75; state.airwayType = 'asthma'; state.pc = 16;
+            } else if (presetKey === 'copd') {
+                state.complianceFactor = 1.45; state.airwayType = 'copd'; state.pc = 10;
+            } else if (presetKey === 'ards') {
+                state.complianceFactor = 0.45; state.airwayType = 'ards'; state.pc = 18;
+            } else if (presetKey === 'edema') {
+                state.complianceFactor = 0.52; state.airwayType = 'edema'; state.pc = 16;
+            } else if (presetKey === 'secretion') {
+                state.complianceFactor = 0.72; state.airwayType = 'secretion'; state.pc = 14;
+            } else if (presetKey === 'one_lung') {
+                state.complianceFactor = 0.50; state.airwayType = 'one_lung'; state.pc = 15;
+            } else if (presetKey === 'pneumothorax') {
+                state.complianceFactor = 0.60; state.airwayType = 'pneumothorax'; state.pc = 14;
+            } else {
+                state.complianceFactor = 1.0; state.airwayType = 'normal'; state.pc = 12;
+            }
+
+            recalculateMechanics();
+            renderModeTiles();
+            if (state.currentTab === 'abg') runABGAnalysis(false);
+
+            if (state.activeAuscMarker) {
+                state.activeAuscMarker.classList.remove('point-active');
+                state.activeAuscMarker = null;
+            }
+            const panel = document.getElementById('assessment-result-panel');
+            const initText = state.lang === 'ja' ? '左のボタンまたは右の写真スポットをタップしてください。' : 'Select a button on the left or an auscultation point on the right.';
+            if (panel) panel.innerHTML = `<span class="text-slate-400 text-xs">${initText}</span>`;
+        }
+        
+        function stepHeight(delta) {
+            const el = document.getElementById('patient-height');
+            el.value = Math.min(200, Math.max(130, parseInt(el.value, 10) + delta));
+            updateBodyMetrics();
+        }
+
+        function updateBodyMetrics() {
+            const h = parseInt(document.getElementById('patient-height').value, 10);
+            const sex = document.getElementById('patient-sex').value;
+            const base = sex === 'male' ? 50.0 : 45.5;
+            state.pbwKg = Math.round(Math.max(30.0, base + 0.91 * (h - 152.4)) * 10) / 10;
+            document.getElementById('disp-pbw').textContent = `${state.pbwKg.toFixed(1)} kg`;
+            document.getElementById('disp-target-vt-range').textContent = `${Math.round(state.pbwKg * 6)}-${Math.round(state.pbwKg * 8)} mL`;
+            recalculateMechanics();
+        }
+
+        function stepSpontRR(delta) {
+            state.spontRRSetting = Math.min(36, Math.max(0, state.spontRRSetting + delta));
+            document.getElementById('disp-spont-rr').textContent = `${state.spontRRSetting}/m`;
+            recalculateMechanics();
+        }
+
+        function toggleApneaBackup() {
+            state.apneaBackupEnabled = !state.apneaBackupEnabled;
+            const btn = document.getElementById('btn-apnea-backup');
+            btn.textContent = state.apneaBackupEnabled ? `Backup: ON (${state.tapnea}s)` : `Backup: OFF`;
+        }
+
+        function resetApneaBackup() {
+            state.apneaBackupActive = false;
+            document.getElementById('apnea-backup-alert').classList.add('hidden');
+            recalculateMechanics();
+        }
+
+        function resetSimulator() {
+            document.getElementById('patient-sex').value = 'female';
+            document.getElementById('patient-height').value = 160;
+            document.getElementById('case-preset').value = 'normal';
+            applyCasePreset('normal');
+            updateBodyMetrics();
+            autoSetAlarms();
+            clearABGHistory();
+            runABGAnalysis(false);
+        }
+
+        function toggleFreeze() {
+            state.isFrozen = !state.isFrozen;
+            const btn = document.getElementById('btn-freeze');
+            const badge = document.getElementById('freeze-status-badge');
+            const dict = I18N[state.lang];
+            if (state.isFrozen) {
+                btn.innerHTML = `<span>▶️</span> <span>${dict.resume}</span>`;
+                badge.classList.remove('hidden');
+            } else {
+                btn.innerHTML = `<span>❄️</span> <span>${dict.freeze}</span>`;
+                badge.classList.add('hidden');
+            }
+        }
+        
+        function setTimeScale(sec) { rebuildTimeAxisArrays(sec); }
+        function toggleYAutoScale() { state.yAutoScale = !state.yAutoScale; }
+
+        // ============================================================================
+        // 7. タブ切り替え & アラーム管理
+        // ============================================================================
+        function switchMainTab(tabKey) {
+            state.currentTab = tabKey;
+            const stdView = document.getElementById('standard-waves-view');
+            const loopView = document.getElementById('loops-view');
+            const physView = document.getElementById('physical-view');
+            const almView = document.getElementById('alarms-view');
+            const abgView = document.getElementById('abg-view');
+            const ctrlBar = document.getElementById('graph-control-bar');
+
+            const btn3 = document.getElementById('btn-tab-3waves');
+            const btnLoop = document.getElementById('btn-tab-loops');
+            const btnPhys = document.getElementById('btn-tab-physical');
+            const btnAlm = document.getElementById('btn-tab-alarms');
+            const btnAbg = document.getElementById('btn-tab-abg');
+
+            [stdView, loopView, physView, almView, abgView].forEach(v => v.classList.add('hidden'));
+            [btn3, btnLoop, btnPhys].forEach(b => b.className = "px-1.5 py-1 rounded font-extrabold text-slate-300 hover:text-white text-center whitespace-nowrap");
+            btnAlm.className = "px-1 py-1 rounded font-extrabold text-amber-300 hover:text-white bg-amber-950/40 border border-amber-500/40 text-center whitespace-nowrap";
+            btnAbg.className = "px-1.5 py-1 rounded font-extrabold text-rose-300 hover:text-white bg-rose-950/50 border border-rose-500/50 text-center whitespace-nowrap";
+
+            if (tabKey === 'loops') {
+                loopView.classList.remove('hidden');
+                ctrlBar.classList.remove('hidden');
+                btnLoop.className = "px-1.5 py-1 rounded font-extrabold bg-sky-600 text-white shadow text-center whitespace-nowrap";
+                if (!state.isFrozen) updateLoopCharts();
+                setTimeout(() => { if (window.pvLoopChart) pvLoopChart.resize(); if (window.fvLoopChart) fvLoopChart.resize(); }, 40);
+            } else if (tabKey === 'physical') {
+                physView.classList.remove('hidden');
+                ctrlBar.classList.add('hidden');
+                btnPhys.className = "px-1.5 py-1 rounded font-extrabold text-white bg-emerald-600 border border-emerald-400 shadow text-center whitespace-nowrap";
+            } else if (tabKey === 'alarms') {
+                almView.classList.remove('hidden');
+                ctrlBar.classList.add('hidden');
+                btnAlm.className = "px-1 py-1 rounded font-extrabold text-slate-950 bg-amber-400 border border-amber-300 shadow text-center whitespace-nowrap";
+                refreshAlarmInputsUI();
+            } else if (tabKey === 'abg') {
+                abgView.classList.remove('hidden');
+                ctrlBar.classList.add('hidden');
+                btnAbg.className = "px-1.5 py-1 rounded font-extrabold text-white bg-rose-600 border border-rose-400 shadow text-center whitespace-nowrap";
+                if (state.abgHistory.length === 0) runABGAnalysis(false);
+            } else {
+                stdView.classList.remove('hidden');
+                ctrlBar.classList.remove('hidden');
+                btn3.className = "px-1.5 py-1 rounded font-extrabold bg-sky-600 text-white shadow text-center whitespace-nowrap";
+                setTimeout(() => { if (window.pressureChart) pressureChart.resize(); if (window.flowChart) flowChart.resize(); if (window.volumeChart) volumeChart.resize(); }, 40);
+            }
+        }
+
+        // ============================================================================
+        // 8. 動的血液ガス分析（ABG）計算
+        // ============================================================================
+        function runABGAnalysis(recordHistory = true) {
+            const caseKey = state.caseKey;
+            const fio2Frac = state.fio2 / 100.0;
+            const peep = state.mode === 'APRV' ? state.plow : state.peep;
+            const currentMV = state.liveMve || 5.0;
+            const normalMV = (state.pbwKg * 100) / 1000.0;
+            const mvRatio = Math.max(0.4, Math.min(2.2, currentMV / normalMV));
+
+            let basePaCO2 = 40.0; let basePaO2 = 95.0; let baseHCO3 = 24.0; let shuntFactor = 0.08;
+
+            if (caseKey === 'ards') { basePaCO2 = 48.0; baseHCO3 = 23.0; shuntFactor = 0.38; }
+            else if (caseKey === 'copd') { basePaCO2 = 62.0; baseHCO3 = 31.0; shuntFactor = 0.22; }
+            else if (caseKey === 'asthma') { basePaCO2 = 56.0; baseHCO3 = 24.5; shuntFactor = 0.18; }
+            else if (caseKey === 'edema') { basePaCO2 = 42.0; baseHCO3 = 21.0; shuntFactor = 0.30; }
+            else if (caseKey === 'secretion') { basePaCO2 = 46.0; baseHCO3 = 23.5; shuntFactor = 0.24; }
+            else if (caseKey === 'one_lung') { basePaCO2 = 44.0; baseHCO3 = 24.0; shuntFactor = 0.28; }
+            else if (caseKey === 'pneumothorax') { basePaCO2 = 46.0; baseHCO3 = 24.0; shuntFactor = 0.20; }
+
+            let paco2 = Math.min(95.0, Math.max(18.0, basePaCO2 / Math.pow(mvRatio, 0.72)));
+            let effectivePeepBonus = 1.0;
+            if (caseKey === 'ards' || caseKey === 'edema') {
+                if (peep >= 10 && peep <= 16) effectivePeepBonus = 1.35;
+                else if (peep < 8) effectivePeepBonus = 0.75;
+            }
+
+            const pAO2 = Math.max(40, (713 * fio2Frac) - (paco2 / 0.8));
+            let pao2 = Math.min(450.0, Math.max(32.0, pAO2 * (1 - (shuntFactor / effectivePeepBonus))));
+
+            let hco3 = baseHCO3;
+            const deltaCO2 = paco2 - basePaCO2;
+            hco3 = Math.max(10.0, Math.min(45.0, hco3 + deltaCO2 * 0.1));
+            let ph = Math.min(7.68, Math.max(6.95, 6.1 + Math.log10(hco3 / (0.0307 * paco2))));
+
+            const sao2 = Math.min(100, Math.max(45, Math.round((Math.pow(pao2, 2.7) / (Math.pow(pao2, 2.7) + 25000)) * 100)));
+            const pfRatio = Math.round(pao2 / fio2Frac);
+
+            let interpTitle = "【酸塩基平衡】 正常範囲 (Normal)";
+            let oxygenStatus = "酸素化良好";
+            let interpDetail = "換気・酸素化ともに目標範囲内です。";
+
+            if (ph < 7.35) {
+                if (paco2 > 45) {
+                    interpTitle = hco3 > 26 ? "【酸塩基】 呼吸性アシドーシス (代償あり)" : "【酸塩基】 急性呼吸性アシドーシス (低換気)";
+                    interpDetail = "分時換気量が不足しCO2が蓄積しています。換気量(VT/PC)や呼吸回数の増加を検討してください。";
+                } else {
+                    interpTitle = "【酸塩基】 代謝性アシドーシス";
+                    interpDetail = "循環不全または組織低灌流による乳酸蓄積の可能性があります。";
+                }
+            } else if (ph > 7.45) {
+                if (paco2 < 35) {
+                    interpTitle = "【酸塩基】 呼吸性アルカローシス (過換気)";
+                    interpDetail = "過換気状態です。分時換気量が高すぎるため設定の抑制を考慮してください。";
+                } else {
+                    interpTitle = "【酸塩基】 代謝性アルカローシス";
+                }
+            }
+
+            if (pfRatio < 100) {
+                oxygenStatus = "重度低酸素 (P/F < 100)";
+                interpDetail += " 重篤な酸素化障害です。PEEPの最適化または高濃度酸素投与が必要です。";
+            } else if (pfRatio < 200) { oxygenStatus = "中等度低酸素 (P/F 100-200)"; }
+            else if (pfRatio < 300) { oxygenStatus = "軽度低酸素 (P/F 200-300)"; }
+
+            state.currentABG = {
+                ph: parseFloat(ph.toFixed(2)), paco2: parseFloat(paco2.toFixed(1)),
+                pao2: parseFloat(pao2.toFixed(1)), hco3: parseFloat(hco3.toFixed(1)),
+                sao2, pfRatio, interpTitle, oxygenStatus, interpDetail
+            };
+
+            const phEl = document.getElementById('abg-cur-ph');
+            if (phEl) {
+                phEl.textContent = state.currentABG.ph.toFixed(2);
+                document.getElementById('abg-cur-paco2').textContent = state.currentABG.paco2.toFixed(1);
+                document.getElementById('abg-cur-pao2').textContent = state.currentABG.pao2.toFixed(1);
+                document.getElementById('abg-cur-hco3').textContent = state.currentABG.hco3.toFixed(1);
+                document.getElementById('abg-cur-sao2').textContent = `${state.currentABG.sao2}%`;
+                document.getElementById('abg-cur-pf').textContent = state.currentABG.pfRatio;
+
+                phEl.className = (ph >= 7.35 && ph <= 7.45) ? "text-base font-extrabold text-emerald-400" : "text-base font-extrabold text-rose-400";
+                document.getElementById('abg-cur-paco2').className = (paco2 >= 35 && paco2 <= 45) ? "text-base font-extrabold text-sky-400" : (paco2 > 45 ? "text-base font-extrabold text-amber-400" : "text-base font-extrabold text-cyan-400");
+                document.getElementById('abg-cur-pao2').className = pao2 >= 80 ? "text-base font-extrabold text-emerald-400" : (pao2 < 60 ? "text-base font-extrabold text-rose-400" : "text-base font-extrabold text-yellow-400");
+
+                document.getElementById('abg-interp-title').textContent = interpTitle;
+                document.getElementById('abg-oxygen-status').textContent = oxygenStatus;
+                document.getElementById('abg-oxygen-status').className = pfRatio >= 300 ? "text-[10px] px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-300 font-servo" : "text-[10px] px-1.5 py-0.2 rounded bg-rose-950 text-rose-300 font-servo";
+                document.getElementById('abg-interp-detail').textContent = interpDetail;
+            }
+
+            if (recordHistory) {
+                const now = new Date();
+                const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+                state.abgHistory.unshift({
+                    time: timeStr, setting: `${state.fio2}% / ${peep}`,
+                    ph: state.currentABG.ph, paco2: state.currentABG.paco2,
+                    pao2: state.currentABG.pao2, hco3: state.currentABG.hco3, pf: state.currentABG.pfRatio,
+                    judge: (ph >= 7.35 && ph <= 7.45 && pao2 >= 75) ? "適正" : (ph < 7.30 || pao2 < 60 ? "危険" : "注意")
+                });
+                if (state.abgHistory.length > 8) state.abgHistory.pop();
+                renderABGHistoryTable();
+                playClickTone();
+            }
+        }
+
+        function renderABGHistoryTable() {
+            const tbody = document.getElementById('abg-history-tbody');
+            if (!tbody) return;
+            tbody.innerHTML = state.abgHistory.map(row => `
+                <tr class="hover:bg-slate-900/50">
+                    <td class="py-1 text-slate-400">${row.time}</td>
+                    <td class="text-slate-300">${row.setting}</td>
+                    <td class="${row.ph >= 7.35 && row.ph <= 7.45 ? 'text-emerald-400' : 'text-rose-400'} font-bold">${row.ph.toFixed(2)}</td>
+                    <td class="${row.paco2 > 45 ? 'text-amber-400' : 'text-slate-200'}">${row.paco2.toFixed(1)}</td>
+                    <td class="${row.pao2 < 60 ? 'text-rose-400 font-bold' : 'text-slate-200'}">${row.pao2.toFixed(1)}</td>
+                    <td class="text-slate-300">${row.hco3.toFixed(1)}</td>
+                    <td class="${row.pf < 200 ? 'text-rose-400' : 'text-cyan-300'}">${row.pf}</td>
+                    <td><span class="px-1 py-0.2 rounded text-[9px] ${row.judge === '適正' ? 'bg-emerald-950 text-emerald-300' : (row.judge === '危険' ? 'bg-rose-950 text-rose-300' : 'bg-amber-950 text-amber-300')}">${row.judge}</span></td>
+                </tr>
+            `).join('');
+        }
+
+        function clearABGHistory() {
+            state.abgHistory = [];
+            renderABGHistoryTable();
+        }
+// ============================================================================
+        // 9. アラーム音源 & 閾値管理
+        // ============================================================================
+        let audioCtx = null;
+        let lastAlarmPlayedTime = 0;
+        state.latchedAlarm = null;
+        const NOTES = { C4: 261.63, F4: 349.23, A4: 440.00 };
+
+        function initAudio() {
+            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+        }
+
+        function toggleSound() {
+            initAudio();
+            state.soundEnabled = !state.soundEnabled;
+            const btn = document.getElementById('btn-sound-toggle');
+            if (state.soundEnabled) {
+                btn.textContent = '🔊 音: ON';
+                btn.className = 'px-2 py-0.5 rounded text-[11px] font-servo font-extrabold border border-emerald-500 bg-emerald-950/80 text-emerald-300 transition active:scale-95';
+                playClickTone();
+            } else {
+                btn.textContent = '🔇 音: OFF';
+                btn.className = 'px-2 py-0.5 rounded text-[11px] font-servo font-extrabold border border-slate-600 bg-slate-800 text-slate-300 transition active:scale-95';
+            }
+        }
+
+        function playPulse(freq, startTime, duration = 0.15) {
+            if (!state.soundEnabled || !audioCtx) return;
+            const masterGain = audioCtx.createGain();
+            masterGain.connect(audioCtx.destination);
+            masterGain.gain.setValueAtTime(0, startTime);
+            masterGain.gain.linearRampToValueAtTime(0.2, startTime + 0.015);
+            masterGain.gain.setValueAtTime(0.2, startTime + duration - 0.02);
+            masterGain.gain.linearRampToValueAtTime(0.0001, startTime + duration);
+
+            [1, 2, 3].forEach((h, index) => {
+                const osc = audioCtx.createOscillator();
+                const hGain = audioCtx.createGain();
+                osc.type = 'sine'; osc.frequency.setValueAtTime(freq * h, startTime);
+                hGain.gain.setValueAtTime([1.0, 0.4, 0.2][index], startTime);
+                osc.connect(hGain); hGain.connect(masterGain);
+                osc.start(startTime); osc.stop(startTime + duration);
+            });
+        }
+
+        function playVentHigh() {
+            if (!state.soundEnabled) return;
+            initAudio();
+            const now = audioCtx.currentTime + 0.05;
+            const t_d = 0.22;
+            [{ note: NOTES.C4, offset: 0 }, { note: NOTES.A4, offset: 1 * t_d }, { note: NOTES.F4, offset: 2 * t_d }].forEach(p => playPulse(p.note, now + p.offset, 0.12));
+        }
+
+        function playVentMedium() {
+            if (!state.soundEnabled) return;
+            initAudio();
+            const now = audioCtx.currentTime + 0.05;
+            [NOTES.C4, NOTES.A4].forEach((freq, idx) => playPulse(freq, now + idx * 0.28, 0.16));
+        }
+
+        function playClickTone() {
+            if (!state.soundEnabled || !audioCtx) return;
+            const now = audioCtx.currentTime;
+            const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
+            osc.type = 'sine'; osc.frequency.setValueAtTime(1200, now);
+            gain.gain.setValueAtTime(0.04, now); gain.gain.exponentialRampToValueAtTime(0.001, now + 0.03);
+            osc.connect(gain); gain.connect(audioCtx.destination);
+            osc.start(now); osc.stop(now + 0.03);
+        }
+
+        function clearLatchedAlarm() { state.latchedAlarm = null; updateMonitorDOM(state.totalRR); }
+
+        function triggerAlarmSound(priority) {
+            const now = Date.now();
+            const interval = priority === 'high' ? 3600 : 5000;
+            if (now - lastAlarmPlayedTime > interval) {
+                lastAlarmPlayedTime = now;
+                if (priority === 'high') playVentHigh(); else playVentMedium();
+            }
+        }
+
+        function autoSetAlarms() {
+            const curPpeak = state.ppeak || 20; const curMV = state.liveMve || 5.0;
+            const curVT = state.liveVte || 360; const curRR = state.totalRR || 15;
+            state.alarmLimits.pawHigh = Math.min(55, Math.round(curPpeak + 10));
+            state.alarmLimits.pawLow = Math.max(2, Math.round(curPpeak * 0.70));
+            state.alarmLimits.mvHigh = parseFloat((curMV * 1.25).toFixed(1));
+            state.alarmLimits.mvLow = Math.max(1.0, parseFloat((curMV * 0.75).toFixed(1)));
+            state.alarmLimits.vtHigh = Math.min(900, Math.round(curVT * 1.30));
+            state.alarmLimits.vtLow = Math.max(100, Math.round(curVT * 0.70));
+            state.alarmLimits.rrHigh = Math.min(55, Math.round(curRR + 12));
+            state.alarmLimits.rrLow = Math.max(4, Math.round(curRR - 7));
+            refreshAlarmInputsUI(); playClickTone();
+        }
+
+        function syncAlarmVal(key, val) {
+            const num = parseFloat(val);
+            if (key === 'paw-high') { state.alarmLimits.pawHigh = Math.round(num); document.getElementById('rng-paw-high').value = num; document.getElementById('num-paw-high').value = num; }
+            if (key === 'paw-low')  { state.alarmLimits.pawLow = Math.round(num); document.getElementById('rng-paw-low').value = num; document.getElementById('num-paw-low').value = num; }
+            if (key === 'mv-high')   { state.alarmLimits.mvHigh = num; document.getElementById('rng-mv-high').value = num; document.getElementById('num-mv-high').value = num; }
+            if (key === 'mv-low')    { state.alarmLimits.mvLow = num; document.getElementById('rng-mv-low').value = num; document.getElementById('num-mv-low').value = num; }
+            if (key === 'vt-high')   { state.alarmLimits.vtHigh = Math.round(num); document.getElementById('rng-vt-high').value = num; document.getElementById('num-vt-high').value = num; }
+            if (key === 'vt-low')    { state.alarmLimits.vtLow = Math.round(num); document.getElementById('rng-vt-low').value = num; document.getElementById('num-vt-low').value = num; }
+            if (key === 'rr-high')   { state.alarmLimits.rrHigh = Math.round(num); document.getElementById('rng-rr-high').value = num; document.getElementById('num-rr-high').value = num; }
+            if (key === 'rr-low')    { state.alarmLimits.rrLow = Math.round(num); document.getElementById('rng-rr-low').value = num; document.getElementById('num-rr-low').value = num; }
+            updateMonitorDOM(state.totalRR);
+        }
+
+        function refreshAlarmInputsUI() {
+            const lim = state.alarmLimits;
+            const phR = document.getElementById('rng-paw-high');
+            if (!phR) return;
+            phR.value = lim.pawHigh; document.getElementById('num-paw-high').value = lim.pawHigh;
+            document.getElementById('rng-paw-low').value = lim.pawLow; document.getElementById('num-paw-low').value = lim.pawLow;
+            document.getElementById('rng-mv-high').value = lim.mvHigh; document.getElementById('num-mv-high').value = lim.mvHigh;
+            document.getElementById('rng-mv-low').value = lim.mvLow; document.getElementById('num-mv-low').value = lim.mvLow;
+            document.getElementById('rng-vt-high').value = lim.vtHigh; document.getElementById('num-vt-high').value = lim.vtHigh;
+            document.getElementById('rng-vt-low').value = lim.vtLow; document.getElementById('num-vt-low').value = lim.vtLow;
+            document.getElementById('rng-rr-high').value = lim.rrHigh; document.getElementById('num-rr-high').value = lim.rrHigh;
+            document.getElementById('rng-rr-low').value = lim.rrLow; document.getElementById('num-rr-low').value = lim.rrLow;
+        }
+
+        // ============================================================================
+        // 10. ダイレクト設定タイル & モーダル制御
+        // ============================================================================
+        function renderModeTiles() {
+            const grid = document.getElementById('tile-grid');
+            if (!grid) return;
+            const keys = MODE_TILES[state.mode] || MODE_TILES['PCV'];
+            let html = '';
+            keys.forEach(k => {
+                const spec = PARAM_SPECS[k];
+                const rawVal = state[spec.prop];
+                const dispVal = spec.step < 1 ? rawVal.toFixed(spec.step === 0.05 ? 2 : 1) : rawVal;
+                const isActive = state.activeParamKey === k ? 'servo-tile-active' : '';
+                const shortTitle = (state.lang === 'en' && spec.shortEn) ? spec.shortEn : spec.short;
+                const unitStr = (state.lang === 'en' && spec.unitEn) ? spec.unitEn : spec.unit;
+                html += `
+                <div onclick="openParamEditor('${k}')" class="servo-tile ${isActive} p-1 rounded-xl flex flex-col justify-between">
+                    <div class="text-[9px] font-extrabold text-slate-200 truncate">${shortTitle}</div>
+                    <div class="tile-main-val font-extrabold ${spec.color} my-0.2">${dispVal}</div>
+                    <div class="text-[8px] font-bold text-slate-400 truncate">${unitStr}</div>
+                </div>`;
+            });
+            grid.innerHTML = html;
+            const ttot = 60 / state.setRR;
+            const te = Math.max(0.20, ttot - state.ti);
+            const ieStr = formatIERatio(state.ti, te);
+            document.getElementById('bar-ie-preview').textContent = ieStr;
+            document.getElementById('m-ie-set').textContent = ieStr;
+            document.getElementById('trig-type-label').textContent = `Flow ${state.trig.toFixed(1)}`;
+        }
+
+        function openParamEditor(paramKey) {
+            state.activeParamKey = paramKey;
+            const spec = PARAM_SPECS[paramKey];
+            renderModeTiles();
+            const titleStr = (state.lang === 'en' && spec.titleEn) ? spec.titleEn : spec.title;
+            const unitStr = (state.lang === 'en' && spec.unitEn) ? spec.unitEn : spec.unit;
+            document.getElementById('editor-title').textContent = titleStr;
+            document.getElementById('editor-range-info').textContent = `[${spec.min}〜${spec.max}${unitStr}]`;
+            const slider = document.getElementById('editor-slider');
+            slider.min = spec.min; slider.max = spec.max; slider.step = spec.step; slider.value = state[spec.prop];
+            updateEditorDisplay(state[spec.prop], spec);
+            document.getElementById('param-editor-popup').classList.remove('hidden');
+        }
+
+        function closeParamEditor() {
+            state.activeParamKey = null;
+            document.getElementById('param-editor-popup').classList.add('hidden');
+            renderModeTiles();
+        }
+
+        function stepActiveParam(multiplier) {
+            if (!state.activeParamKey) return;
+            const spec = PARAM_SPECS[state.activeParamKey];
+            const delta = multiplier === 1 ? spec.step : (multiplier === -1 ? -spec.step : (multiplier > 0 ? spec.largeStep : -spec.largeStep));
+            let newVal = Math.min(spec.max, Math.max(spec.min, Math.round((parseFloat(state[spec.prop]) + delta) * 100) / 100));
+            state[spec.prop] = newVal;
+            document.getElementById('editor-slider').value = newVal;
+            updateEditorDisplay(newVal, spec);
+            renderModeTiles(); recalculateMechanics();
+        }
+
+        function onEditorSliderInput(val) {
+            if (!state.activeParamKey) return;
+            const spec = PARAM_SPECS[state.activeParamKey];
+            state[spec.prop] = parseFloat(val);
+            updateEditorDisplay(state[spec.prop], spec);
+            renderModeTiles(); recalculateMechanics();
+        }
+
+        function updateEditorDisplay(val, spec) {
+            const unitStr = (state.lang === 'en' && spec.unitEn) ? spec.unitEn : spec.unit;
+            document.getElementById('editor-current-val').textContent = spec.step < 1 ? val.toFixed(spec.step === 0.05 ? 2 : 1) : val;
+            document.getElementById('editor-current-unit').textContent = unitStr;
+            const ttot = 60 / state.setRR;
+            const te = Math.max(0.20, ttot - state.ti);
+            document.getElementById('prev-ttot').textContent = `${ttot.toFixed(2)}s`;
+            document.getElementById('prev-ti').textContent = `${state.ti.toFixed(2)}s`;
+            document.getElementById('prev-te').textContent = `${te.toFixed(2)}s`;
+            document.getElementById('prev-ie').textContent = formatIERatio(state.ti, te);
+        }
+
+        function openModeModal() { document.getElementById('mode-modal').classList.remove('hidden'); }
+        function closeModeModal() { document.getElementById('mode-modal').classList.add('hidden'); }
+        function selectVentMode(mode) {
+            state.mode = mode;
+            document.getElementById('mode-badge').textContent = mode;
+            closeModeModal(); closeParamEditor(); renderModeTiles(); recalculateMechanics();
+        }
+
+        function formatIERatio(ti, te) {
+            if (te <= 0.1) return "4.0:1";
+            if (ti <= te) return `1:${(te / ti).toFixed(1)}`;
+            return `${(ti / te).toFixed(1)}:1`;
+        }
+
+        // ============================================================================
+        // 11. 力学計算 & Dräger準拠リアルタイムループ・波形エンジン (超軽量化)
+        // ============================================================================
+        const DT_SEC = 0.08;
+        let dataPointsCount = Math.round(10 / DT_SEC);
+        const labels = []; const pawData = []; const flowData = []; const volData = [];
+
+        function rebuildTimeAxisArrays(seconds) {
+            state.timeWindowSec = seconds;
+            dataPointsCount = Math.round(seconds / DT_SEC);
+            labels.length = 0;
+            for (let i = 0; i < dataPointsCount; i++) labels.push(`${(i * DT_SEC).toFixed(1)}s`);
+            const resizeArr = (arr, fillVal) => {
+                while (arr.length < dataPointsCount) arr.unshift(fillVal);
+                while (arr.length > dataPointsCount) arr.shift();
+            };
+            resizeArr(pawData, state.peep); resizeArr(flowData, 0); resizeArr(volData, 0);
+        }
+
+        function recalculateMechanics() {
+            const effectivePeep = state.mode === 'APRV' ? Math.round(state.phigh * 0.55) : state.peep;
+            let normCompPer50Kg = 28.0 * state.complianceFactor;
+            let baseCompliance = normCompPer50Kg * (state.pbwKg / 50.0);
+            if (state.airwayType === 'secretion') baseCompliance *= 0.80;
+            if (state.airwayType === 'asthma') baseCompliance *= 0.85;
+            if (state.airwayType === 'copd') baseCompliance *= 1.40;
+            if (state.airwayType === 'one_lung' || state.airwayType === 'pneumothorax') baseCompliance *= 0.55;
+
+            state.cdyn = Math.max(8.0, Math.round(baseCompliance * 10) / 10);
+
+            let resistancePenalty = 0;
+            if (state.airwayType === 'asthma') resistancePenalty = 14;
+            else if (state.airwayType === 'secretion') resistancePenalty = 7;
+            else if (state.airwayType === 'copd') resistancePenalty = 6;
+            else if (state.airwayType === 'one_lung') resistancePenalty = 5;
+
+            const activeMode = (state.mode === 'SPONT+PS' && state.apneaBackupActive) ? 'BACKUP_PCV' : state.mode;
+            let targetBaseVt = Math.round(state.pbwKg * 7.0);
+            let targetPplat = 18; let targetPpeak = 20;
+
+            if (activeMode === 'PCV') {
+                targetBaseVt = Math.round(state.pc * state.cdyn * 0.95);
+                targetPplat = state.peep + state.pc;
+                targetPpeak = targetPplat + 1 + resistancePenalty;
+            } else if (activeMode === 'BACKUP_PCV') {
+                const backupPc = Math.max(12, state.ps);
+                targetBaseVt = Math.round(backupPc * state.cdyn * 0.92);
+                targetPplat = state.peep + backupPc; targetPpeak = targetPplat + 1 + resistancePenalty;
+            } else if (activeMode === 'VCV') {
+                targetBaseVt = state.targetVt;
+                targetPplat = state.peep + Math.round(state.targetVt / state.cdyn);
+                targetPpeak = targetPplat + Math.round(4 / Math.max(0.4, state.ti)) + resistancePenalty;
+            } else if (activeMode === 'PRVC') {
+                targetBaseVt = state.targetVt;
+                const reqPc = Math.min(35, Math.max(4, Math.round(state.targetVt / state.cdyn)));
+                targetPplat = state.peep + reqPc; targetPpeak = targetPplat + 2 + resistancePenalty;
+            } else if (activeMode === 'SPONT+PS') {
+                targetBaseVt = Math.round(state.ps * state.cdyn * 0.85);
+                targetPplat = state.peep + state.ps; targetPpeak = targetPplat + 1 + resistancePenalty;
+            } else if (activeMode === 'APRV') {
+                targetBaseVt = Math.round(Math.max(4, state.phigh - state.plow) * state.cdyn * 0.85);
+                targetPplat = state.phigh; targetPpeak = state.phigh + resistancePenalty;
+            }
+
+            state.baseVt = Math.max(60, targetBaseVt);
+            state.pplat = targetPplat; state.ppeak = targetPpeak;
+            state.srr = state.spontRRSetting;
+            const aprvReleaseRR = Math.round(60 / (state.thigh + state.tlow));
+            const baseSetRR = activeMode === 'APRV' ? aprvReleaseRR : (activeMode === 'BACKUP_PCV' ? 15 : state.setRR);
+
+            state.totalRR = state.mode === 'SPONT+PS' ? state.srr : (state.mode === 'APRV' ? aprvReleaseRR + Math.round(state.srr * 0.35) : Math.max(baseSetRR, state.srr));
+            state.p01 = state.srr === 0 ? 0.0 : -Math.round((1.2 + state.srr * 0.08) * 10) / 10;
+
+            const actualCycle = 60 / Math.max(6, state.totalRR || 1);
+            const actualTe = state.mode === 'APRV' ? state.tlow : Math.max(0.20, actualCycle - state.ti);
+            if (actualTe < 1.2 && state.totalRR > 0) {
+                state.autoPeep = Math.round((1.2 - actualTe) * 6.5 * 10) / 10;
+                state.expResidualFlow = -Math.round(state.autoPeep * 5.0 * 10) / 10;
+                state.peepTot = Math.round((state.peep + state.autoPeep) * 10) / 10;
+            } else {
+                state.autoPeep = 0.0; state.expResidualFlow = 0.0; state.peepTot = state.peep;
+            }
+
+            const ieWarn = document.getElementById('ie-warning-badge');
+            if (ieWarn) {
+                if (state.autoPeep >= 1.0) ieWarn.classList.remove('hidden');
+                else ieWarn.classList.add('hidden');
+            }
+
+            applyBreathFluctuation();
+        }
+
+        function applyBreathFluctuation() {
+            state.liveVte = Math.max(60, state.baseVt + Math.floor((Math.random() - 0.5) * 8));
+            state.liveVti = state.liveVte + Math.floor(Math.random() * 4) + 2;
+            const liveRR = state.totalRR;
+            state.liveMve = Math.round((state.liveVte * liveRR) / 100) / 10;
+            state.liveMvi = Math.round((state.liveVti * liveRR) / 100) / 10;
+            state.rsbi = state.liveVte > 0 ? Math.round(liveRR / (state.liveVte / 1000)) : 0;
+            updateMonitorDOM(liveRR);
+        }
+
+        function updateMonitorDOM(liveRR) {
+            const dict = I18N[state.lang];
+            const ppeakEl = document.getElementById('m-ppeak');
+            if (!ppeakEl) return;
+            ppeakEl.textContent = state.ppeak;
+            document.getElementById('m-pplat').textContent = `(${state.pplat})`;
+            document.getElementById('m-peep').textContent = state.peepTot.toFixed(1);
+            document.getElementById('m-autopeep').textContent = `+${state.autoPeep.toFixed(1)}`;
+            document.getElementById('m-rr').textContent = liveRR;
+            document.getElementById('m-srr-sub').textContent = `(${state.srr})`;
+            document.getElementById('m-o2').textContent = state.fio2;
+            document.getElementById('m-vti').textContent = state.liveVti;
+            document.getElementById('m-vte').textContent = state.liveVte;
+            document.getElementById('m-mvi').textContent = state.liveMvi.toFixed(1);
+            document.getElementById('m-mve').textContent = state.liveMve.toFixed(1);
+            document.getElementById('m-cdyn').textContent = state.cdyn.toFixed(1);
+            document.getElementById('m-p01').textContent = state.p01.toFixed(1);
+
+            const mlPerKg = (state.liveVte / state.pbwKg).toFixed(1);
+            document.getElementById('m-vte-per-kg').textContent = `VTe: ${mlPerKg} mL/kg PBW`;
+
+            const rsbiEl = document.getElementById('m-rsbi');
+            const rsbiStatusEl = document.getElementById('m-rsbi-status');
+            if (state.liveVte === 0 || liveRR === 0) {
+                rsbiEl.textContent = "---"; rsbiEl.className = "metric-single-val font-extrabold font-servo text-rose-500";
+                rsbiStatusEl.textContent = dict.rsbiApnea; rsbiStatusEl.className = "text-[9px] px-1 py-0.2 rounded bg-red-900 text-white font-bold shrink-0";
+            } else {
+                rsbiEl.textContent = state.rsbi;
+                if (state.rsbi < 105 && parseFloat(mlPerKg) >= 5.8) {
+                    rsbiEl.className = "metric-single-val font-extrabold font-servo text-emerald-400";
+                    rsbiStatusEl.textContent = dict.rsbiOk; rsbiStatusEl.className = "text-[9px] px-1 py-0.2 rounded bg-emerald-950 text-emerald-300 font-bold shrink-0";
+                } else {
+                    rsbiEl.className = "metric-single-val font-extrabold font-servo text-amber-400";
+                    rsbiStatusEl.textContent = dict.rsbiWarn; rsbiStatusEl.className = "text-[9px] px-1 py-0.2 rounded bg-amber-950 text-amber-300 font-bold shrink-0";
+                }
+            }
+
+            const actualCycle = 60 / Math.max(6, liveRR || 1);
+            const dispTi = state.mode === 'APRV' ? state.thigh : state.ti;
+            const actualTe = state.mode === 'APRV' ? state.tlow : Math.max(0.20, actualCycle - state.ti);
+            document.getElementById('m-tite').textContent = `${dispTi.toFixed(1)}/${actualTe.toFixed(1)}s`;
+            document.getElementById('m-ie-meas').textContent = `(${formatIERatio(dispTi, actualTe)})`;
+
+            // アラーム判定
+            const alarmBanner = document.getElementById('alarm-banner');
+            const lim = state.alarmLimits;
+            let curAlarm = null;
+            if (state.ppeak >= lim.pawHigh) curAlarm = `🚨 高圧上限 [HIP]`;
+            else if (state.liveMve >= lim.mvHigh) curAlarm = `⚠️ MV上限`;
+            else if (state.liveMve <= lim.mvLow) curAlarm = `⚠️ MV下限`;
+
+            if (curAlarm) {
+                alarmBanner.classList.remove('hidden');
+                alarmBanner.textContent = curAlarm;
+                triggerAlarmSound('medium');
+            } else {
+                alarmBanner.classList.add('hidden');
+            }
+        }
+
+        // -------------------------------------------------------------
+        // Chart.js 初期化 (Dräger準拠のリアルタイムループ描画)
+        // -------------------------------------------------------------
+        rebuildTimeAxisArrays(10);
+        const makeWaveChartConfig = (min, max) => ({
+            responsive: true, maintainAspectRatio: false, animation: false,
+            plugins: { legend: { display: false }, tooltip: { enabled: false } },
+            elements: { point: { radius: 0 }, line: { borderWidth: 2.2, tension: 0.2 } },
+            scales: {
+                x: { display: false },
+                y: { min, max, grid: { color: 'rgba(148, 163, 184, 0.16)' }, ticks: { color: '#cbd5e1', font: { size: 10 } } }
+            }
+        });
+
+        const pressureChart = new Chart(document.getElementById('pressureChart'), {
+            type: 'line', data: { labels, datasets: [{ data: pawData, borderColor: '#facc15', backgroundColor: 'rgba(250, 204, 21, 0.14)', fill: true }] },
+            options: makeWaveChartConfig(0, 35)
+        });
+        const flowChart = new Chart(document.getElementById('flowChart'), {
+            type: 'line', data: { labels, datasets: [{ data: flowData, borderColor: '#4ade80', backgroundColor: 'rgba(74, 222, 128, 0.14)', fill: true }] },
+            options: makeWaveChartConfig(-60, 60)
+        });
+        const volumeChart = new Chart(document.getElementById('volumeChart'), {
+            type: 'line', data: { labels, datasets: [{ data: volData, borderColor: '#38bdf8', backgroundColor: 'rgba(56, 189, 248, 0.15)', fill: true }] },
+            options: makeWaveChartConfig(0, 500)
+        });
+
+        // リアルタイム軌跡バッファ
+        let curPvTrace = [];
+        let curFvTrace = [];
+        let prevPvTrace = [];
+        let prevFvTrace = [];
+
+        const makeLoopChartConfig = (xTitle, yTitle, xMax, yMin, yMax) => ({
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            plugins: { legend: { display: false }, tooltip: { enabled: false } },
+            elements: { point: { radius: 0 }, line: { tension: 0.35 } },
+            scales: {
+                x: {
+                    type: 'linear', min: 0, max: xMax,
+                    title: { display: true, text: xTitle, color: '#94a3b8', font: { size: 9, family: 'Share Tech Mono' } },
+                    grid: { color: 'rgba(148, 163, 184, 0.12)' },
+                    ticks: { color: '#cbd5e1', font: { size: 9, family: 'Share Tech Mono' }, maxTicksLimit: 5 }
+                },
+                y: {
+                    min: yMin, max: yMax,
+                    title: { display: true, text: yTitle, color: '#94a3b8', font: { size: 9, family: 'Share Tech Mono' } },
+                    grid: { color: 'rgba(148, 163, 184, 0.12)' },
+                    ticks: { color: '#cbd5e1', font: { size: 9, family: 'Share Tech Mono' }, maxTicksLimit: 5 }
+                }
+            }
+        });
+
+        const pvLoopChart = new Chart(document.getElementById('pvLoopChart'), {
+            type: 'scatter',
+            data: {
+                datasets: [
+                    { data: [], showLine: true, borderColor: 'rgba(250, 204, 21, 0.22)', borderWidth: 1.5, fill: false },
+                    { data: [], showLine: true, borderColor: '#facc15', backgroundColor: 'rgba(250, 204, 21, 0.12)', borderWidth: 2.6, fill: true },
+                    { data: [], pointRadius: 4.5, pointBackgroundColor: '#ffffff', pointBorderColor: '#facc15', pointBorderWidth: 2 }
+                ]
+            },
+            options: makeLoopChartConfig('Paw (cmH2O)', 'Volume (mL)', 35, 0, 500)
+        });
+
+        const fvLoopChart = new Chart(document.getElementById('fvLoopChart'), {
+            type: 'scatter',
+            data: {
+                datasets: [
+                    { data: [], showLine: true, borderColor: 'rgba(74, 222, 128, 0.22)', borderWidth: 1.5, fill: false },
+                    { data: [], showLine: true, borderColor: '#4ade80', backgroundColor: 'rgba(74, 222, 128, 0.12)', borderWidth: 2.6, fill: true },
+                    { data: [], pointRadius: 4.5, pointBackgroundColor: '#ffffff', pointBorderColor: '#4ade80', pointBorderWidth: 2 }
+                ]
+            },
+            options: makeLoopChartConfig('Volume (mL)', 'Flow (L/min)', 500, -60, 60)
+        });
+
+        function updateLoopFindings() {
+            const hasBeaking = state.ppeak >= 30 || state.peep > 14;
+            const hasLowerInflection = state.peep < 6 && state.complianceFactor < 0.8;
+            const pvFind = document.getElementById('pv-loop-finding');
+            if (pvFind) {
+                if (hasBeaking) {
+                    pvFind.textContent = "⚠️ 上部変曲点・くちばし様 (過膨張注意)";
+                    pvFind.className = "text-[11px] font-bold text-rose-400 font-servo text-center bg-slate-950 py-1 px-1.5 rounded border border-rose-800/60 mt-1 truncate";
+                } else if (hasLowerInflection) {
+                    pvFind.textContent = "⚠️ 下部変曲点 (低PEEP・低コンプライアンス)";
+                    pvFind.className = "text-[11px] font-bold text-amber-300 font-servo text-center bg-slate-950 py-1 px-1.5 rounded border border-amber-800/60 mt-1 truncate";
+                } else {
+                    pvFind.textContent = "✓ 適正コンプライアンス域";
+                    pvFind.className = "text-[11px] font-bold text-emerald-300 font-servo text-center bg-slate-950 py-1 px-1.5 rounded border border-slate-800 mt-1 truncate";
+                }
+            }
+
+            const fvFind = document.getElementById('fv-loop-finding');
+            if (fvFind) {
+                if (state.airwayType === 'secretion') {
+                    fvFind.textContent = "⚠️ ノコギリ歯状波形 (分泌物貯留)";
+                    fvFind.className = "text-[11px] font-bold text-amber-300 font-servo text-center bg-slate-950 py-1 px-1.5 rounded border border-amber-800/60 mt-1 truncate";
+                } else if (state.autoPeep >= 1.0) {
+                    fvFind.textContent = `⚠️ 呼気未帰還 (Auto-PEEP +${state.autoPeep.toFixed(1)})`;
+                    fvFind.className = "text-[11px] font-bold text-rose-400 font-servo text-center bg-slate-950 py-1 px-1.5 rounded border border-rose-800/60 mt-1 truncate";
+                } else {
+                    fvFind.textContent = "✓ 呼気終末ゼロ帰還良好";
+                    fvFind.className = "text-[11px] font-bold text-emerald-300 font-servo text-center bg-slate-950 py-1 px-1.5 rounded border border-slate-800 mt-1 truncate";
+                }
+            }
+            document.getElementById('pv-loop-tag').textContent = `Cdyn: ${state.cdyn.toFixed(1)} mL/cmH2O`;
+        }
+
+        function checkApneaBackupTimer() {
+            if (state.mode === 'SPONT+PS') {
+                if (state.srr <= 2 && !state.apneaBackupActive) {
+                    state.apneaDurationSec += 0.2;
+                    if (state.apneaBackupEnabled && state.apneaDurationSec >= state.tapnea) {
+                        state.apneaBackupActive = true;
+                        document.getElementById('apnea-backup-alert').classList.remove('hidden');
+                        document.getElementById('mode-badge').textContent = 'SPONT+PS (Backup)';
+                        recalculateMechanics();
+                    }
+                } else if (state.srr > 2) {
+                    state.apneaDurationSec = 0;
+                }
+            }
+        }
+
+        // ============================================================================
+        // 12. リアルタイム・アニメーション駆動 (requestAnimationFrame)
+        // ============================================================================
+        let tick = 0;
+        let lastFrameTime = 0;
+        const TARGET_FPS = 25; // 25fps駆動で滑らかさを保ちつつ負荷を削減
+        const FRAME_INTERVAL = 1000 / TARGET_FPS;
+
+        function animateWaveforms(currentTime) {
+            requestAnimationFrame(animateWaveforms);
+
+            if (state.isFrozen) return;
+            if (currentTime - lastFrameTime < FRAME_INTERVAL) return;
+            lastFrameTime = currentTime;
+
+            const cycleSec = 60 / Math.max(6, state.totalRR);
+            const cycleSteps = Math.max(12, Math.round(cycleSec / DT_SEC));
+            const inspSteps = Math.max(4, Math.round(state.ti / DT_SEC));
+            const phase = tick % cycleSteps;
+
+            // 新呼吸サイクルの開始：前呼吸をゴースト退避してリフレッシュ
+            if (phase === 0) {
+                applyBreathFluctuation();
+                if (curPvTrace.length > 3) {
+                    prevPvTrace = [...curPvTrace];
+                    prevFvTrace = [...curFvTrace];
+                }
+                curPvTrace = [];
+                curFvTrace = [];
+                updateLoopFindings();
+            }
+
+            let paw = state.peep;
+            let flow = 0;
+            let vol = 0;
+
+            const isVCV = state.mode === 'VCV' || state.mode === 'SIMV(VC)+PS';
+            const hasSpontTrigger = (state.srr >= state.setRR && state.srr > 0) || state.mode === 'SPONT+PS';
+            const hasBeaking = state.ppeak >= 30 || state.peep > 14;
+
+            // -------------------------------------------------------------
+            // A. 吸気相 (Inspiration)
+            // -------------------------------------------------------------
+            if (phase < inspSteps) {
+                const prog = phase / inspSteps;
+
+                // 1. Dräger準拠: トリガー時の陰圧ねじれ (Fish tail)
+                if (phase === 0 && hasSpontTrigger) {
+                    paw = Math.max(0, state.peep - (state.trig * 0.7)); 
+                    vol = 2;
+                    flow = 4;
+                }
+                // 2. VCVモード: Dräger準拠 直線的圧上昇
+                else if (isVCV) {
+                    const rDrop = 3.5;
+                    const cRise = (state.ppeak - state.peep - rDrop) * prog;
+                    paw = state.peep + rDrop + cRise;
+                    flow = 38; // 定常流
+                    vol = state.liveVte * prog;
+                }
+                // 3. PCV/PSVモード: Dräger準拠 Box-like shape (四角い圧波形と減速流)
+                else {
+                    const riseRate = Math.min(1.0, (phase + 1) / Math.max(1, Math.round(state.rise / DT_SEC)));
+                    let targetP = state.peep + (state.ppeak - state.peep) * Math.pow(riseRate, 0.6);
+                    
+                    // Dräger準拠: 過膨張(Beaking)時は吸気終末で圧のみ右へ突出
+                    if (hasBeaking && prog > 0.8) {
+                        targetP += (prog - 0.8) * 15;
+                    }
+                    paw = targetP;
+
+                    // 減速フロー (Decelerating flow)
+                    flow = Math.max(0, (52 * Math.exp(-prog * 2.2)));
+                    vol = state.liveVte * Math.sin(prog * Math.PI * 0.5);
+                }
+
+                // Dräger準拠: 喀痰分泌物によるノコギリ歯状ラトリング (Saw-tooth pattern)
+                if (state.airwayType === 'secretion') {
+                    flow += Math.sin(phase * 2.2) * 5.5;
+                    paw += Math.sin(phase * 2.2) * 0.7;
+                }
+            } 
+            // -------------------------------------------------------------
+            // B. 呼気相 (Expiration)
+            // -------------------------------------------------------------
+            else {
+                const expSteps = cycleSteps - inspSteps;
+                const expProg = (phase - inspSteps) / expSteps;
+
+                // Dräger準拠: 呼気開始で弁が開き、圧は直ちにPEEPへ急降下
+                paw = state.peep + (state.autoPeep * (1 - expProg));
+
+                const isObstructive = (state.airwayType === 'copd' || state.airwayType === 'asthma');
+                
+                if (isObstructive) {
+                    // Dräger準拠: 閉塞性疾患の呼気スクープ (急速な流速低下)
+                    flow = -50 * Math.exp(-expProg * 1.5);
+                    vol = Math.max(0, state.liveVte * Math.exp(-expProg * 2.0));
+                } else {
+                    flow = -45 * Math.exp(-expProg * 3.0);
+                    vol = Math.max(0, state.liveVte * Math.exp(-expProg * 3.4));
+                }
+
+                // Dräger準拠: Auto-PEEP時の呼気終末未帰還
+                if (phase === cycleSteps - 1 && state.autoPeep > 0.5) {
+                    flow = state.expResidualFlow;
+                }
+
+                if (state.airwayType === 'secretion') {
+                    flow += Math.sin(phase * 2.2) * 4.5;
+                }
+            }
+
+            const pPoint = { x: Math.round(paw * 10) / 10, y: Math.round(vol) };
+            const fPoint = { x: Math.round(vol), y: Math.round(flow * 10) / 10 };
+            curPvTrace.push(pPoint);
+            curFvTrace.push(fPoint);
+
+            // 3波形バッファ更新
+            pawData.push(pPoint.x); pawData.shift();
+            flowData.push(fPoint.y); flowData.shift();
+            volData.push(pPoint.y); volData.shift();
+
+            // 表示中のタブのみ描画更新（非表示タブはスキップしてCPU負荷削減）
+            if (state.currentTab === '3waves') {
+                pressureChart.update('none');
+                flowChart.update('none');
+                volumeChart.update('none');
+            } else if (state.currentTab === 'loops') {
+                pvLoopChart.data.datasets[0].data = prevPvTrace;
+                pvLoopChart.data.datasets[1].data = curPvTrace;
+                pvLoopChart.data.datasets[2].data = [pPoint];
+
+                fvLoopChart.data.datasets[0].data = prevFvTrace;
+                fvLoopChart.data.datasets[1].data = curFvTrace;
+                fvLoopChart.data.datasets[2].data = [fPoint];
+
+                if (state.yAutoScale) {
+                    const maxPaw = Math.max(state.ppeak + 6, 25);
+                    const maxVol = Math.max(state.liveVte + 80, 420);
+                    pvLoopChart.options.scales.x.max = maxPaw;
+                    pvLoopChart.options.scales.y.max = maxVol;
+                    fvLoopChart.options.scales.x.max = maxVol;
+                }
+
+                pvLoopChart.update('none');
+                fvLoopChart.update('none');
+            }
+
+            tick++;
+        }
+
+        // ============================================================================
+        // 13. 初期化実行
+        // ============================================================================
+        window.addEventListener('DOMContentLoaded', () => {
+            setScreenSize('mobile');
+            setMobileMaxWidth(448);
+            updateBodyMetrics();
+            renderModeTiles();
+            autoSetAlarms();
+            applyCasePreset('normal');
+            runABGAnalysis(false);
+            setLanguage('ja');
+            requestAnimationFrame(animateWaveforms);
+            setInterval(checkApneaBackupTimer, 200);
+        });
+    </script>
+</body>
+</html>
